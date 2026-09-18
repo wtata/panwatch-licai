@@ -2,7 +2,7 @@
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -113,16 +113,15 @@ def test_discipline_and_learning_routers_are_jwt_protected():
     assert "/api/discipline/summary" in paths
     assert "/api/learning/cards" in paths
 
-    protected = [
-        r
-        for r in app.routes
-        if getattr(r, "path", "").startswith("/api/discipline")
-        or getattr(r, "path", "").startswith("/api/learning")
-    ]
-    assert protected
-    for route in protected:
-        dep_fns = [d.dependency for d in (route.dependencies or [])]
-        assert get_current_user in dep_fns
+    found = []
+    for route in app.router.routes:
+        ctx = getattr(route, "include_context", None)
+        prefix = getattr(ctx, "prefix", None) if ctx is not None else None
+        if prefix in ("/api/discipline", "/api/learning"):
+            dep_fns = [getattr(d, "dependency", None) for d in (getattr(ctx, "dependencies", None) or [])]
+            found.append(prefix)
+            assert get_current_user in dep_fns
+    assert set(found) == {"/api/discipline", "/api/learning"}
 
 
 def test_m127_creates_discipline_tables_and_seeds_rules(tmp_path):
@@ -144,6 +143,5 @@ def test_m127_creates_discipline_tables_and_seeds_rules(tmp_path):
 
 
 def test_orm_models_register_discipline_tables():
-    tables = inspect(Base).get_table_names()
-    assert "discipline_journal" in tables
-    assert "discipline_rules" in tables
+    assert "discipline_journal" in Base.metadata.tables
+    assert "discipline_rules" in Base.metadata.tables
