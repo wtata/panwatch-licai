@@ -91,6 +91,15 @@ def test_portfolio_module_owns_benchmark_and_diagnostics():
     assert portfolio_diagnostics.__file__.replace("\\", "/").endswith("/src/modules/portfolio/portfolio_diagnostics.py")
 
 
+def test_licai_module_owns_discipline_and_learning():
+    from src.modules.licai.api import discipline, learning
+    from src.modules.licai import learning_cards
+
+    assert discipline.__file__.replace("\\", "/").endswith("/src/modules/licai/api/discipline.py")
+    assert learning.__file__.replace("\\", "/").endswith("/src/modules/licai/api/learning.py")
+    assert learning_cards.__file__.replace("\\", "/").endswith("/src/modules/licai/learning_cards.py")
+
+
 def test_market_and_strategy_own_alerting_and_event_gating():
     from src.modules.market import price_alert_engine, price_alert_scheduler
     from src.modules.strategy import intraday_event_gate

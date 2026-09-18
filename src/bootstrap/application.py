@@ -22,6 +22,8 @@ from src.modules.administration.api import (
 from src.modules.assistant import api as assistant_api
 from src.modules.assistant import chat_api
 from src.modules.automation.api import agents, suggestions, templates
+from src.modules.licai.api import discipline as licai_discipline
+from src.modules.licai.api import learning as licai_learning
 from src.modules.market.api import (
     discovery,
     klines,
@@ -186,6 +188,18 @@ app.include_router(
     assistant_api.router,
     prefix="/api/assistant",
     tags=["assistant"],
+    dependencies=protected,
+)
+app.include_router(
+    licai_discipline.router,
+    prefix="/api/discipline",
+    tags=["discipline"],
+    dependencies=protected,
+)
+app.include_router(
+    licai_learning.router,
+    prefix="/api/learning",
+    tags=["learning"],
     dependencies=protected,
 )
 # PAT 管理(需登录):创建/列出/吊销 MCP 用的个人访问令牌

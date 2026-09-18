@@ -110,6 +110,8 @@ docker run -d \
 
 访问 `http://localhost:8000`，首次使用设置账号密码即可。
 
+本 fork 另含理财看板（**总览 / 纪律 / 学习**）。当前运行中的官方镜像是 `sunxiao0721/panwatch:latest` = **0.13.2** 时，请用本分支（基于 tag `0.13.2`）做 overlay，不要把更新的 `main` 整棵 `src/` 盖进容器。步骤见 [DOCKER.md](DOCKER.md)。
+
 说明：镜像内已包含 Playwright 运行所需的系统依赖；Chromium 浏览器会在容器首次启动时自动下载并安装到挂载卷（默认 `/app/data/playwright`），首次启动可能需要几分钟且需要网络可达。
 
 如果不需要截图等浏览器能力，可以在启动容器时设置 `PLAYWRIGHT_SKIP_BROWSER_INSTALL=1` 跳过首次 Chromium 下载/安装。

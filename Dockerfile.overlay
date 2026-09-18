@@ -1,0 +1,33 @@
+# Overlay onto official PanWatch 0.13.2
+#
+# 不要用当前 main 的整棵 src/ 覆盖正在跑的 0.13.2 容器：main 已引入
+# pan_agent_token_meter 等依赖，官方 0.13.2 镜像里没有，会 ModuleNotFoundError。
+#
+# 本文件只构建本分支的前端，并把 licai 相关 Python 文件叠到官方镜像上，
+# 不替换整个 /app/src。
+#
+# 需要能拉取 Docker Hub 上的 sunxiao0721/panwatch:0.13.2。
+# 从零完整构建（仓库根 Dockerfile）同样需要 Hub / git 拉 TradingAgents。
+
+# ===== Stage 1: 前端（0.13.2 兼容源码 + 总览/纪律/学习页）=====
+FROM node:24.14.0-alpine AS frontend-builder
+
+WORKDIR /app/frontend
+
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+COPY frontend/ ./
+RUN pnpm build
+
+
+# ===== Stage 2: 叠到官方 0.13.2，只 COPY 变更路径 =====
+FROM sunxiao0721/panwatch:0.13.2
+
+COPY src/modules/licai /app/src/modules/licai
+COPY src/bootstrap/application.py /app/src/bootstrap/application.py
+COPY src/platform/persistence/models.py /app/src/platform/persistence/models.py
+COPY src/platform/persistence/migrations.py /app/src/platform/persistence/migrations.py
+COPY --from=frontend-builder /app/frontend/dist /app/static

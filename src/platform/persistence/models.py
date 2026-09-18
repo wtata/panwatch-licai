@@ -1302,3 +1302,34 @@ class MCPCallLog(Base):
     duration_ms = Column(Integer, default=0)
     client_ip = Column(String, nullable=True)
     called_at = Column(DateTime, server_default=func.now())
+
+
+class DisciplineJournal(Base):
+    """交易纪律笔记（买入 / 减仓 / 观察 / 复盘）。"""
+
+    __tablename__ = "discipline_journal"
+    __table_args__ = (
+        Index("ix_discipline_journal_date", "entry_date", "id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    entry_date = Column(String, nullable=False)  # YYYY-MM-DD
+    symbol = Column(String, nullable=False, default="")
+    entry_type = Column(String, nullable=False, default="review")  # buy/reduce/watch/review
+    body = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class DisciplineRule(Base):
+    """个人交易规则；启用后出现在总览提醒。"""
+
+    __tablename__ = "discipline_rules"
+    __table_args__ = (
+        Index("ix_discipline_rules_enabled", "enabled"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    body = Column(Text, nullable=False, default="")
+    enabled = Column(Boolean, default=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
