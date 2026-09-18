@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { Plus, Trash2, Pencil, Search, X, TrendingUp, Bot, Play, RefreshCw, Wallet, PiggyBank, ArrowUpRight, ArrowDownRight, Building2, ChevronDown, ChevronRight, Cpu, Bell, Clock, Newspaper, ExternalLink, BarChart3, Brain } from 'lucide-react'
+import { Plus, Trash2, Pencil, Search, X, TrendingUp, Bot, Play, RefreshCw, Wallet, PiggyBank, ArrowUpRight, ArrowDownRight, Building2, ChevronDown, ChevronRight, Cpu, Bell, Clock, Newspaper, ExternalLink, BarChart3, Brain, ImagePlus } from 'lucide-react'
 import { fetchAPI, stocksApi, type AIService, type NotifyChannel } from '@panwatch/api'
 import { useLocalStorage } from '@/lib/utils'
 import { SuggestionBadge, type SuggestionInfo, type KlineSummary } from '@panwatch/biz-ui/components/suggestion-badge'
@@ -17,6 +17,7 @@ import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
 import { DeepAnalysisModal } from '@panwatch/biz-ui/components/deep-analysis-modal'
 import StockPriceAlertPanel from '@panwatch/biz-ui/components/stock-price-alert-panel'
+import ScreenshotImportModal from '@/components/holdings/ScreenshotImportModal'
 
 interface AgentResult {
   success?: boolean
@@ -395,6 +396,7 @@ export default function StocksPage() {
 
   // Stock form
   const [showStockForm, setShowStockForm] = useState(false)
+  const [screenshotImportOpen, setScreenshotImportOpen] = useState(false)
   const [stockForm, setStockForm] = useState<StockForm>(emptyStockForm)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchMarket, setSearchMarket] = useState('')  // 搜索市场筛选
@@ -1544,6 +1546,9 @@ export default function StocksPage() {
             <Button variant="secondary" onClick={() => openAccountDialog()}>
               <Building2 className="w-4 h-4" /> 添加账户
             </Button>
+            <Button variant="secondary" onClick={() => setScreenshotImportOpen(true)}>
+              <ImagePlus className="w-4 h-4" /> 截图导入
+            </Button>
             <Button onClick={() => { setStockForm(emptyStockForm); setSearchQuery(''); setShowStockForm(true) }}>
               <Plus className="w-4 h-4" /> 添加股票
             </Button>
@@ -1558,6 +1563,9 @@ export default function StocksPage() {
             </Button>
             <Button variant="secondary" size="sm" className="h-8 w-8 p-0" onClick={() => openAccountDialog()}>
               <Building2 className="w-4 h-4" />
+            </Button>
+            <Button variant="secondary" size="sm" className="h-8 w-8 p-0" title="截图导入" onClick={() => setScreenshotImportOpen(true)}>
+              <ImagePlus className="w-4 h-4" />
             </Button>
             <Button size="sm" className="h-8 w-8 p-0" onClick={() => { setStockForm(emptyStockForm); setSearchQuery(''); setShowStockForm(true) }}>
               <Plus className="w-4 h-4" />
@@ -1744,6 +1752,24 @@ export default function StocksPage() {
           </button>
         </div>
       </div>
+
+      <ScreenshotImportModal
+        open={screenshotImportOpen}
+        onOpenChange={setScreenshotImportOpen}
+        accounts={(portfolio?.accounts || accounts).map(account => ({ id: account.id, name: account.name }))}
+        defaultAccountId={(portfolio?.accounts[0] || accounts[0])?.id ?? null}
+        existingStocks={stocks}
+        existingPositions={(portfolio?.accounts || []).flatMap(account =>
+          account.positions.map(pos => ({
+            id: pos.id,
+            stock_id: pos.stock_id,
+            symbol: pos.symbol,
+            market: pos.market,
+            account_id: account.id,
+          }))
+        )}
+        onImported={() => { load(); loadPortfolio() }}
+      />
 
       {/* Add Stock Dialog */}
       <Dialog open={showStockForm} onOpenChange={(open) => { setShowStockForm(open); if (!open) { setSearchQuery(''); setSearchMarket('') } }}>
