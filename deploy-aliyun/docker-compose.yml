@@ -1,0 +1,25 @@
+services:
+  panwatch:
+    build:
+      context: ./overlay
+      dockerfile: Dockerfile
+    image: panwatch-licai:local
+    container_name: panwatch
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      PLAYWRIGHT_SKIP_BROWSER_INSTALL: "1"
+      DATA_DIR: /app/data
+      DOCKER: "1"
+    volumes:
+      - panwatch_data:/app/data
+    networks:
+      - health-ledger_default
+    # No host ports: reach via health-ledger nginx on shared network
+
+volumes:
+  panwatch_data:
+
+networks:
+  health-ledger_default:
+    external: true

@@ -1,0 +1,6 @@
+This bundle was prepared on the Grok executor box from github.com/wtata/panwatch-licai (overlay branch cursor/licai-on-0.13.2-2780) with frontend/dist built 2026-09-18.
+
+Target on Windows: C:\Users\15295\panwatch-licai\deploy-aliyun\
+Then run push-to-ecs.ps1 with workbench on PATH.
+
+DNS check (from box): gushiding.cn -> 182.92.143.113 (already OK as of deploy attempt).
