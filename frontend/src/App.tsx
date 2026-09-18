@@ -1,9 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
-import { TrendingUp, Bot, ScrollText, Settings, List, Database, Clock, LayoutDashboard, Github, BellRing, Sparkles, Activity, ClipboardCheck, MessageCircle } from 'lucide-react'
+import { TrendingUp, Bot, ScrollText, Settings, List, Database, Clock, LayoutDashboard, Github, BellRing, Sparkles, Activity, ClipboardCheck, MessageCircle, Wallet, Shield, BookOpen } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
 import { appApi, fetchAPI, isAuthenticated } from '@panwatch/api'
 import DashboardPage from '@/pages/Dashboard'
+import OverviewPage from '@/pages/Overview'
+import DisciplinePage from '@/pages/Discipline'
+import LearnPage from '@/pages/Learn'
 import OpportunitiesPage from '@/pages/Opportunities'
 import StocksPage from '@/pages/Stocks'
 import AgentsPage from '@/pages/Agents'
@@ -26,10 +29,13 @@ import { Button } from '@panwatch/base-ui/components/ui/button'
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: '首页' },
+  { to: '/overview', icon: Wallet, label: '总览' },
   { to: '/portfolio', icon: List, label: '持仓' },
   { to: '/opportunities', icon: Sparkles, label: '机会' },
-  { to: '/paper-trading', icon: Activity, label: '模拟盘' },
   { to: '/assistant', icon: MessageCircle, label: '助手' },
+  { to: '/discipline', icon: Shield, label: '纪律' },
+  { to: '/learn', icon: BookOpen, label: '学习' },
+  { to: '/paper-trading', icon: Activity, label: '模拟盘' },
   { to: '/alerts', icon: BellRing, label: '提醒' },
   { to: '/agents', icon: Bot, label: 'Agent' },
   { to: '/evaluations', icon: ClipboardCheck, label: '验证中心' },
@@ -268,6 +274,9 @@ function App() {
         <AssistantOpenBridge />
         <Routes>
           <Route path="/" element={<DashboardPage />} />
+          <Route path="/overview" element={<OverviewPage />} />
+          <Route path="/discipline" element={<DisciplinePage />} />
+          <Route path="/learn" element={<LearnPage />} />
           <Route path="/opportunities" element={<OpportunitiesPage />} />
           <Route path="/portfolio" element={<StocksPage />} />
           <Route path="/agents" element={<AgentsPage />} />

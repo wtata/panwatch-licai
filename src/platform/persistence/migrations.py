@@ -1889,6 +1889,67 @@ def _m124_assistant_context_snapshots(conn: Connection) -> None:
     )
 
 
+def _m127_discipline_tables(conn: Connection) -> None:
+    """理财看板迁入：交易笔记 + 个人规则。
+
+    版本号取 127，与上游后续 125/126（assistant task protocol/events）错开，
+    便于 0.13.2 数据卷以后升级官方镜像时仍能按序补跑 125–126。
+    """
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS discipline_journal (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entry_date TEXT NOT NULL,
+                symbol TEXT NOT NULL DEFAULT '',
+                entry_type TEXT NOT NULL DEFAULT 'review',
+                body TEXT NOT NULL DEFAULT '',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    _create_index_if_missing(
+        conn,
+        "ix_discipline_journal_date",
+        "CREATE INDEX ix_discipline_journal_date ON discipline_journal(entry_date, id)",
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS discipline_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                body TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    _create_index_if_missing(
+        conn,
+        "ix_discipline_rules_enabled",
+        "CREATE INDEX ix_discipline_rules_enabled ON discipline_rules(enabled)",
+    )
+
+    existing = conn.execute(text("SELECT COUNT(*) FROM discipline_rules")).scalar() or 0
+    if int(existing) > 0:
+        return
+
+    seed_sql = text(
+        "INSERT INTO discipline_rules(body, enabled) VALUES(:body, :enabled)"
+    )
+    for body in (
+        "单票仓位不超过总资产的 25%，超额先减再想加",
+        "下单前先写假设：为什么买、错了怎么办",
+        "隔夜仓必须能一句话说清持有理由",
+        "浮亏不加仓，除非计划里已经写过加仓条件",
+        "做 T 只用机动仓，不动核心仓的成本与数量",
+    ):
+        conn.execute(seed_sql, {"body": body, "enabled": 1})
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(101, "agent_config_kind_and_visibility", _m101_agent_config_kind),
     Migration(102, "backfill_agent_kind_data", _m102_backfill_agent_kind),
@@ -1914,6 +1975,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(122, "assistant_task_snapshots", _m122_assistant_task_snapshots),
     Migration(123, "assistant_approval_workflow", _m123_assistant_approval_workflow),
     Migration(124, "assistant_context_snapshots", _m124_assistant_context_snapshots),
+    Migration(127, "discipline_journal_and_rules", _m127_discipline_tables),
 )
 
 
