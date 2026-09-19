@@ -1,5 +1,5 @@
 import { fetchAPI } from '@panwatch/api'
-import { holdingsFromVisionItems, parseHoldings } from './parseHoldings'
+import { holdingsFromVisionItems, isReliableVisionHoldings, parseHoldings } from './parseHoldings'
 import { recognizeHoldingsImage, type RecognizeProgress, type RecognizeResult } from './recognize'
 import type { ParsedHolding } from './types'
 
@@ -42,7 +42,7 @@ export async function scanHoldingsImage(
   onProgress?.({ progress: 0.05, status: '正在用视觉模型读取持仓列' })
   try {
     const holdings = await scanHoldingsViaVision(file)
-    if (holdings.length > 0) {
+    if (isReliableVisionHoldings(holdings)) {
       onProgress?.({ progress: 1, status: '视觉识别完成' })
       return {
         text: holdings.map((row) => `${row.symbol} ${row.name} ${row.quantity ?? ''} ${row.avgCost ?? ''}`).join('\n'),

@@ -15,26 +15,39 @@ MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
 VISION_SYSTEM_PROMPT = """你是持仓表格提取器。用户会给你一张券商 App 或同花顺持仓截图。
 
-只提取持仓明细行，忽略合计、可用资金、总资产、当日盈亏汇总。
+只提取持仓列表里的股票明细，忽略页面装饰和浮窗。
 
-【列规则，必须遵守】
-- quantity：只取「持仓数量」「持股」「份额」，不要用「可卖数量」
-- avgCost：只取「成本价」「持仓成本」「摊薄成本」，不要用「现价」「最新价」「最新市值」「浮动盈亏」
-- 看不清的字段不要猜，那条记录跳过
+【必须忽略】
+- 顶栏券商名（如华宝证券）、买入/卖出/持仓/查询按钮
+- 总资产、持仓/可用/市值汇总、当日盈亏、持仓份额
+- 会议共享浮窗、浏览器、桌面窗口里出现的美股代码（V/A/O/AAPL 等）
+- 名称下方单独一行的市值（带千分位逗号的大数，如 3,696.05）
+
+【同花顺 App 常见列（无证券代码）】
+从左到右通常是：名称 | 盈亏 | 持仓 | 成本/现价
+- name：左侧中文简称，如浙江鼎业、沪电股份
+- quantity：只取「持仓」列整数（700/500/100）。不要用盈亏、不要用可卖、不要用市值
+- avgCost：只取最右侧「成本/现价」列（如 5.362、7.372）。不要用盈亏（-82.23、-303.86），不要用市值
+- code：App 截图经常没有代码。没有就填空字符串，不要编造，不要把持仓数量/盈亏数字当成代码
+- 持仓为 0 的行跳过
+- 港股成本可能带 HK$，只保留数字
+
+【桌面同花顺表】
+列通常是：证券代码、证券名称、持仓数量、可卖数量、成本价、现价、最新市值、盈亏。
+quantity 用持仓数量不是可卖；avgCost 用成本价不是现价/市值。
 
 【输出】
 只输出 JSON 数组，不要 markdown，不要解释。每个元素：
-{"market":"CN|HK|US","code":"证券代码","name":"简称","quantity":数字,"avgCost":数字}
+{"market":"CN|HK|US","code":"证券代码或空字符串","name":"简称","quantity":数字,"avgCost":数字}
 
-市场：
-- A 股/ETF/场内基金 6 位数字 → CN
-- 港股 4-5 位数字 → HK（不足 5 位左侧补 0）
-- 美股字母代码 → US
-
+市场：A 股 6 位 → CN；港股 → HK；美股字母 → US。看不清市场且名称是中文时用 CN。
 没有持仓时输出 []。
 """
 
-VISION_USER_PROMPT = "提取这张持仓截图里每一行的证券代码、名称、持仓数量、成本价。只输出 JSON 数组。"
+VISION_USER_PROMPT = (
+    "这是持仓截图。按列提取每一只股票的名称、持仓数量、成本价；"
+    "没有代码就留空。不要提取券商名、汇总数字、会议浮窗。只输出 JSON 数组。"
+)
 
 _CN_CODE = re.compile(r"^\d{6}$")
 _HK_CODE = re.compile(r"^\d{4,5}$")
@@ -120,6 +133,22 @@ def normalize_code(code: str, market: str) -> str:
     return token
 
 
+_CHROME_RE = re.compile(
+    r"华宝证券|正在共享|总资产|当日盈亏|可用资金|持仓份额|资金余额|持仓管理|"
+    r"配号买入|资产分析|Realty|Visa|Agilent|BHEM|^买入$|^卖出$|^持仓$|^查询$"
+)
+_CN_NAME_RE = re.compile(r"[\u4e00-\u9fa5]{2,}")
+
+
+def _is_chrome_text(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return False
+    if _CHROME_RE.search(t):
+        return True
+    return bool(re.search(r"可用|成本/现|正在共享", t))
+
+
 def normalize_vision_items(items: list[Any] | None) -> list[dict]:
     validated: list[dict] = []
     seen: set[str] = set()
@@ -127,26 +156,31 @@ def normalize_vision_items(items: list[Any] | None) -> list[dict]:
         if not isinstance(item, dict):
             continue
         raw_code = str(item.get("code") or item.get("symbol") or "").strip()
-        if not raw_code:
+        name = str(item.get("name") or "").strip()
+        if _is_chrome_text(raw_code) or _is_chrome_text(name):
             continue
         quantity = _to_number(item.get("quantity"))
         avg_cost = _to_number(item.get("avgCost") or item.get("costPrice") or item.get("cost_price"))
         if quantity is None or quantity <= 0 or avg_cost is None or avg_cost <= 0:
             continue
-        market = infer_market(re.sub(r"[^A-Z0-9.]", "", raw_code.upper()), str(item.get("market") or ""))
-        code = normalize_code(raw_code, market)
-        if not code:
+        code_token = re.sub(r"[^A-Z0-9.]", "", raw_code.upper())
+        if code_token and _US_CODE.match(code_token) and len(code_token) <= 2:
             continue
-        key = f"{market}:{code}"
+        if not code_token and not _CN_NAME_RE.search(name):
+            continue
+        market = infer_market(code_token, str(item.get("market") or ""))
+        if not code_token:
+            market = "HK" if str(item.get("market") or "").upper() == "HK" else "CN"
+        code = normalize_code(raw_code, market) if code_token else ""
+        key = f"{market}:{code}" if code else f"NAME:{name}"
         if key in seen:
             continue
         seen.add(key)
-        name = str(item.get("name") or "").strip() or code
         validated.append(
             {
                 "market": market,
                 "code": code,
-                "name": name,
+                "name": name or code,
                 "quantity": quantity,
                 "avgCost": avg_cost,
             }
@@ -161,6 +195,7 @@ def _to_number(value: Any) -> float | None:
         number = float(value)
         return number if number == number else None
     cleaned = re.sub(r"[,%％\s]", "", str(value).replace(",", ""))
+    cleaned = re.sub(r"(?i)HK\$|USD|CNY|[￥¥$]", "", cleaned)
     try:
         number = float(cleaned)
     except ValueError:

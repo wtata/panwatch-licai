@@ -38,6 +38,13 @@ describe('parseSecurityCode', () => {
     expect(parseSecurityCode('00700')).toEqual({ symbol: '00700', market: 'HK' })
     expect(parseSecurityCode('10000')).toBeNull()
   })
+
+  it('does not treat 1-2 letter UI fragments as US tickers', () => {
+    expect(parseSecurityCode('V')).toBeNull()
+    expect(parseSecurityCode('A')).toBeNull()
+    expect(parseSecurityCode('O')).toBeNull()
+    expect(parseSecurityCode('AAPL')).toEqual({ symbol: 'AAPL', market: 'US' })
+  })
 })
 
 describe('parseHoldingsFromText', () => {
@@ -47,6 +54,24 @@ describe('parseHoldingsFromText', () => {
     expect(rows[0]).toMatchObject({ name: '贵州茅台', quantity: 100, avgCost: 1423.56, market: 'CN' })
     expect(rows[1]).toMatchObject({ name: '五粮液', quantity: 200, avgCost: 128.5 })
     expect(rows[2]).toMatchObject({ name: '宁德时代', quantity: 300, avgCost: 189.2 })
+  })
+
+  it('parses Tonghuashun app rows: 名称 盈亏 持仓 成本/现价 without codes', () => {
+    const rows = parseHoldingsFromText(`
+持仓份额
+浙江鼎业 -82.23 700 5.362
+四维图新 -15.51% 0 13.63
+中国石化 34.86 100 4.401
+沪电股份 -303.86 500 7.372
+锦胜集团 -16.745 100 HK$529.280
+华宝证券
+V 维萨
+`)
+    expect(rows.map((row) => row.name)).toEqual(['浙江鼎业', '中国石化', '沪电股份', '锦胜集团'])
+    expect(rows[0]).toMatchObject({ quantity: 700, avgCost: 5.362 })
+    expect(rows[1]).toMatchObject({ quantity: 100, avgCost: 4.401 })
+    expect(rows[2]).toMatchObject({ quantity: 500, avgCost: 7.372 })
+    expect(rows[3]).toMatchObject({ quantity: 100, avgCost: 529.28, market: 'HK' })
   })
 
   it('parses compact card-style mobile screenshots', () => {

@@ -1,4 +1,4 @@
-import { inferMarket, normalizeSymbol } from './parseHoldings'
+import { inferMarket, normalizeSymbol, parseSecurityCode } from './parseHoldings'
 import type { EditableHoldingRow, PositionRef, StockRef } from './types'
 
 export interface SearchHit {
@@ -55,20 +55,37 @@ export async function enrichRowFromSearch(
   row: EditableHoldingRow,
   searchStocks: HoldingImportDeps['searchStocks'],
 ): Promise<EditableHoldingRow> {
-  const market = row.market || inferMarket(row.symbol)
-  const symbol = normalizeSymbol(row.symbol, market)
+  const parsedCode = parseSecurityCode(row.symbol)
+  const query = parsedCode ? normalizeSymbol(parsedCode.symbol, parsedCode.market) : row.name.trim()
+  if (!query) return row
+  const market = parsedCode ? parsedCode.market : ''
   try {
-    const hits = await searchStocks(symbol, market)
-    const exact = hits.find((hit) => sameSymbol(hit.symbol, hit.market, symbol, market))
-    if (!exact) return { ...row, symbol, market }
+    const hits = await searchStocks(query, market)
+    if (parsedCode) {
+      const symbol = query
+      const exact = hits.find((hit) => sameSymbol(hit.symbol, hit.market, symbol, parsedCode.market))
+      if (!exact) return { ...row, symbol, market: parsedCode.market }
+      return {
+        ...row,
+        symbol: normalizeSymbol(exact.symbol, (exact.market as EditableHoldingRow['market']) || parsedCode.market),
+        name: exact.name || row.name,
+        market: (exact.market as EditableHoldingRow['market']) || parsedCode.market,
+      }
+    }
+    const exactName = hits.find((hit) => hit.name === row.name)
+      || hits.find((hit) => hit.name.includes(row.name) || row.name.includes(hit.name))
+    if (!exactName) return row
     return {
       ...row,
-      symbol: normalizeSymbol(exact.symbol, (exact.market as EditableHoldingRow['market']) || market),
-      name: exact.name || row.name,
-      market: (exact.market as EditableHoldingRow['market']) || market,
+      symbol: normalizeSymbol(exactName.symbol, (exactName.market as EditableHoldingRow['market']) || inferMarket(exactName.symbol)),
+      name: exactName.name || row.name,
+      market: (exactName.market as EditableHoldingRow['market']) || inferMarket(exactName.symbol),
+      warnings: row.warnings.filter((item) => !item.includes('证券代码')),
     }
   } catch {
-    return { ...row, symbol, market }
+    return parsedCode
+      ? { ...row, symbol: query, market: parsedCode.market }
+      : row
   }
 }
 

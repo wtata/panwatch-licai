@@ -36,6 +36,21 @@ def test_normalize_skips_last_price_shaped_invalid_rows_and_maps_markets():
     ]
 
 
+def test_normalize_keeps_name_only_app_rows_and_drops_overlay_tickers():
+    items = normalize_vision_items(
+        [
+            {"market": "CN", "code": "", "name": "浙江鼎业", "quantity": 700, "avgCost": 5.362},
+            {"market": "US", "code": "V", "name": "维萨", "quantity": 0, "avgCost": 0},
+            {"market": "CN", "code": "", "name": "华宝证券", "quantity": 1, "avgCost": 1},
+            {"market": "CN", "code": "沪电股份", "name": "沪电股份", "quantity": 500, "avgCost": 7.372},
+        ]
+    )
+    assert [(row["name"], row["code"], row["quantity"], row["avgCost"]) for row in items] == [
+        ("浙江鼎业", "", 700.0, 5.362),
+        ("沪电股份", "", 500.0, 7.372),
+    ]
+
+
 def test_decode_data_url_rejects_empty_and_accepts_jpeg_header():
     with pytest.raises(ValueError, match="缺少截图"):
         decode_data_url("")

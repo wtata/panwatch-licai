@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { commitHoldingImport, parseRowNumbers } from '@/lib/ocr/importHoldings'
+import { commitHoldingImport, enrichRowFromSearch, parseRowNumbers } from '@/lib/ocr/importHoldings'
 import type { EditableHoldingRow } from '@/lib/ocr/types'
 
 function row(partial: Partial<EditableHoldingRow> & Pick<EditableHoldingRow, 'symbol'>): EditableHoldingRow {
@@ -14,6 +14,30 @@ function row(partial: Partial<EditableHoldingRow> & Pick<EditableHoldingRow, 'sy
     warnings: partial.warnings || [],
   }
 }
+
+describe('enrichRowFromSearch', () => {
+  it('fills code by Chinese name when screenshot has no symbol', async () => {
+    const searchStocks = vi.fn(async () => [
+      { symbol: '603955', name: '浙江鼎业', market: 'CN' },
+    ])
+    const row = await enrichRowFromSearch(
+      {
+        id: '1',
+        selected: true,
+        symbol: '',
+        name: '浙江鼎业',
+        market: 'CN',
+        quantity: '700',
+        avgCost: '5.362',
+        warnings: ['未识别到证券代码，将按名称匹配'],
+      },
+      searchStocks,
+    )
+    expect(searchStocks).toHaveBeenCalledWith('浙江鼎业', '')
+    expect(row.symbol).toBe('603955')
+    expect(row.warnings).toEqual([])
+  })
+})
 
 describe('parseRowNumbers', () => {
   it('rejects missing quantity or cost', () => {
