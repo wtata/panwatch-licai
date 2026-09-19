@@ -303,7 +303,7 @@ export function nameAppearsInOcrText(name: string, ocrText: string): boolean {
 
 export function filterHoldingsByOcrText(rows: ParsedHolding[], ocrText: string): ParsedHolding[] {
   const compact = (ocrText || '').replace(/\s+/g, '')
-  if (compact.length < 8) return rows
+  if (compact.length < 8) return []
   return rows.filter((row) => nameAppearsInOcrText(row.name, ocrText))
 }
 
@@ -314,6 +314,17 @@ export function namesCompatible(ocrName: string, officialName: string): boolean 
   if (a === b) return true
   if (a.length >= 3 && (b.includes(a) || a.includes(b))) return true
   if (b.length >= 3 && (a.includes(b) || b.includes(a))) return true
+  return isSingleCharCompletion(a, b)
+}
+
+function isSingleCharCompletion(ocrName: string, officialName: string): boolean {
+  if (ocrName.length < 2 || officialName.length < ocrName.length + 1) return false
+  if (officialName.length - ocrName.length > 2) return false
+  let i = 0
+  for (const ch of officialName) {
+    if (ch === ocrName[i]) i += 1
+    if (i >= ocrName.length) return true
+  }
   return false
 }
 
@@ -736,13 +747,13 @@ export function mergeParsedHoldings(primary: ParsedHolding[], secondary: ParsedH
 
 export function isPlausibleHolding(row: ParsedHolding): boolean {
   if (!isChineseStockName(row.name)) return false
-  if ((row.market || 'CN') === 'CN' && cleanStockName(row.name).length < 3) return false
   if (row.quantity == null || row.quantity <= 0 || row.avgCost == null || row.avgCost <= 0) return false
-  if (row.market === 'CN' && (!Number.isInteger(row.quantity) || row.quantity % 100 !== 0)) return false
+  const market = row.market || 'CN'
+  if (market === 'CN' && (!Number.isInteger(row.quantity) || row.quantity % 100 !== 0)) return false
   if (row.symbol) {
     const n = Number(row.symbol)
-    if (row.market === 'HK' && Number.isFinite(n) && n >= 1000 && n % 100 === 0) return false
-    if (row.market === 'US' && !isChineseStockName(row.name) && row.symbol.length < 4) return false
+    if (market === 'HK' && Number.isFinite(n) && n >= 1000 && n % 100 === 0) return false
+    if (market === 'US' && !isChineseStockName(row.name) && row.symbol.length < 4) return false
   }
   return true
 }
@@ -838,4 +849,16 @@ export function toEditableRows(holdings: ParsedHolding[]): EditableHoldingRow[] 
     avgCost: row.avgCost != null ? String(Number(row.avgCost.toFixed(4))) : '',
     warnings: row.warnings,
   }))
+}
+
+export function sanitizeEditableHoldings(rows: EditableHoldingRow[]): EditableHoldingRow[] {
+  return rows.filter((row) => {
+    const name = cleanStockName(row.name)
+    const market = row.market || inferMarket(row.symbol || '')
+    const quantity = Number.parseInt(String(row.quantity).replace(/[,\s]/g, ''), 10)
+    if (!isChineseStockName(name)) return false
+    if (market === 'CN' && (!Number.isInteger(quantity) || quantity % 100 !== 0)) return false
+    if (market === 'CN' && name.length < 3) return false
+    return true
+  })
 }

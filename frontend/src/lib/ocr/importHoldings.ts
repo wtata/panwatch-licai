@@ -51,6 +51,16 @@ function sameSymbol(a: string, aMarket: string, b: string, bMarket: string): boo
   return normalizeSymbol(a, marketA as 'CN' | 'HK' | 'US') === normalizeSymbol(b, marketB as 'CN' | 'HK' | 'US')
 }
 
+function pickUniqueNameHit(nameQuery: string, hits: SearchHit[]): SearchHit | undefined {
+  const query = cleanStockName(nameQuery)
+  if (!query) return undefined
+  const exact = hits.find((hit) => cleanStockName(hit.name) === query)
+  if (exact) return exact
+  const compatible = hits.filter((hit) => namesCompatible(query, hit.name))
+  if (compatible.length === 1) return compatible[0]
+  return undefined
+}
+
 export async function enrichRowFromSearch(
   row: EditableHoldingRow,
   searchStocks: HoldingImportDeps['searchStocks'],
@@ -72,7 +82,7 @@ export async function enrichRowFromSearch(
       }
       if (exact && nameQuery && !namesCompatible(row.name, exact.name)) {
         const nameHits = await searchStocks(nameQuery, '')
-        const exactName = nameHits.find((hit) => hit.name === nameQuery)
+        const exactName = pickUniqueNameHit(nameQuery, nameHits)
         if (exactName) {
           return {
             ...row,
@@ -96,7 +106,7 @@ export async function enrichRowFromSearch(
         : row
     }
     const nameHits = await searchStocks(nameQuery, '')
-    const exactName = nameHits.find((hit) => hit.name === nameQuery)
+    const exactName = pickUniqueNameHit(nameQuery, nameHits)
     if (!exactName) {
       return parsedCode
         ? { ...row, symbol: normalizeSymbol(parsedCode.symbol, parsedCode.market), market: parsedCode.market }

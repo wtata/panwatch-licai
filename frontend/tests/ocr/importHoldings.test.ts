@@ -60,6 +60,27 @@ describe('enrichRowFromSearch', () => {
     expect(row.symbol).toBe('603955')
     expect(row.name).toBe('浙江鼎业')
   })
+
+  it('repairs truncated OCR name 多多 to unique 多氟多', async () => {
+    const searchStocks = vi.fn(async () => [
+      { symbol: '002407', name: '多氟多', market: 'CN' },
+    ])
+    const row = await enrichRowFromSearch(
+      {
+        id: '3',
+        selected: false,
+        symbol: '',
+        name: '多多',
+        market: 'CN',
+        quantity: '100',
+        avgCost: '36.208',
+        warnings: ['未识别到证券代码，将按名称匹配'],
+      },
+      searchStocks,
+    )
+    expect(row.symbol).toBe('002407')
+    expect(row.name).toBe('多氟多')
+  })
 })
 
 describe('parseRowNumbers', () => {

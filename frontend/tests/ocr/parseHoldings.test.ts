@@ -5,6 +5,7 @@ import {
   parseHoldingsFromWords,
   parseSecurityCode,
   preferOcrHoldings,
+  sanitizeEditableHoldings,
   sanitizeHoldings,
   toEditableRows,
 } from '@/lib/ocr/parseHoldings'
@@ -227,7 +228,12 @@ describe('sanitizeHoldings', () => {
       { symbol: '300071', name: '福石控股', market: 'CN', quantity: 449, avgCost: 4.134, warnings: [] },
       { symbol: '', name: '多多', market: 'CN', quantity: 100, avgCost: 36.208, warnings: [] },
       { symbol: '603881', name: '数据港', market: 'CN', quantity: 200, avgCost: 27.553, warnings: [] },
-    ]).map((row) => row.name)).toEqual(['数据港'])
+    ]).map((row) => row.name)).toEqual(['多多', '数据港'])
+    expect(sanitizeEditableHoldings(toEditableRows([
+      { symbol: '', name: '多多', market: 'CN', quantity: 100, avgCost: 36.208, warnings: [] },
+      { symbol: '002407', name: '多氟多', market: 'CN', quantity: 100, avgCost: 36.208, warnings: [] },
+      { symbol: '300071', name: '福石控股', market: 'CN', quantity: 449, avgCost: 4.134, warnings: [] },
+    ])).map((row) => row.name)).toEqual(['多氟多'])
 
     const merged = preferOcrHoldings(ocr, vision, ocrText)
     expect(merged.map((row) => row.name)).toEqual(['浙江鼎业', '数据港', '道氏技术'])

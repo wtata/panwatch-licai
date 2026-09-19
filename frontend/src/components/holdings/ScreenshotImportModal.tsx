@@ -8,7 +8,7 @@ import { Label } from '@panwatch/base-ui/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@panwatch/base-ui/components/ui/select'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import { commitHoldingImport, enrichRowFromSearch, parseRowNumbers, type HoldingImportDeps } from '@/lib/ocr/importHoldings'
-import { parseHoldings, toEditableRows } from '@/lib/ocr/parseHoldings'
+import { parseHoldings, toEditableRows, sanitizeEditableHoldings } from '@/lib/ocr/parseHoldings'
 import { fileFromPasteEvent, readClipboardImage } from '@/lib/ocr/recognize'
 import { scanHoldingsImage, type ScanHoldingsResult } from '@/lib/ocr/scanHoldings'
 import type { EditableHoldingRow, PositionRef, StockRef } from '@/lib/ocr/types'
@@ -116,7 +116,7 @@ export default function ScreenshotImportModal({
         : parseHoldings(result)
       const editable = toEditableRows(parsed)
       const enriched = await Promise.all(editable.map((row) => enrichRowFromSearch(row, importDeps.searchStocks)))
-      setRows(enriched)
+      setRows(sanitizeEditableHoldings(enriched))
       setStage('preview')
       if (enriched.length === 0) {
         setError('没有识别到股票，请换一张更清晰的同花顺持仓截图，或在预览中手工核对')
