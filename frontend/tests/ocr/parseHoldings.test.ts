@@ -185,6 +185,36 @@ describe('sanitizeHoldings', () => {
     })
     expect(rows.map((row) => row.name).sort()).toEqual(['数据港', '翠微股份', '道氏技术'].sort())
   })
+
+  it('drops odd-lot A-share rows, two-character names, and vision-only invented names', () => {
+    const ocrText = `
+浙江鼎业 -82.23 700 5.362
+数据港 -67.62 200 27.553
+道氏技术 -32.17 400 17.876
+`
+    const ocr = parseHoldingsFromText(ocrText)
+    const vision = [
+      { symbol: '300071', name: '福石控股', market: 'CN' as const, quantity: 449, avgCost: 4.134, warnings: [] },
+      { symbol: '300164', name: '通源石油', market: 'CN' as const, quantity: 300, avgCost: 9.703, warnings: [] },
+      { symbol: '', name: '多多', market: 'CN' as const, quantity: 100, avgCost: 36.208, warnings: [] },
+      { symbol: '300409', name: '道氏技术', market: 'CN' as const, quantity: 600, avgCost: 17.876, warnings: [] },
+      { symbol: '603881', name: '数据港', market: 'CN' as const, quantity: 200, avgCost: 27.553, warnings: [] },
+    ]
+    expect(sanitizeHoldings([
+      { symbol: '300071', name: '福石控股', market: 'CN', quantity: 449, avgCost: 4.134, warnings: [] },
+      { symbol: '', name: '多多', market: 'CN', quantity: 100, avgCost: 36.208, warnings: [] },
+      { symbol: '603881', name: '数据港', market: 'CN', quantity: 200, avgCost: 27.553, warnings: [] },
+    ]).map((row) => row.name)).toEqual(['数据港'])
+
+    const merged = preferOcrHoldings(ocr, vision, ocrText)
+    expect(merged.map((row) => row.name)).toEqual(['浙江鼎业', '数据港', '道氏技术'])
+    expect(merged.find((row) => row.name === '道氏技术')).toMatchObject({ quantity: 400, symbol: '300409' })
+    expect(merged.find((row) => row.name === '福石控股')).toBeUndefined()
+    expect(merged.find((row) => row.name === '通源石油')).toBeUndefined()
+
+    const visionOnly = preferOcrHoldings([], vision, ocrText)
+    expect(visionOnly.map((row) => row.name)).toEqual(['道氏技术', '数据港'])
+  })
 })
 
 describe('findDarkContentBox', () => {

@@ -57,7 +57,7 @@ export async function scanHoldingsImage(
 
   const ocr = await recognizeHoldingsImage(prepared, onProgress)
   const ocrHoldings = parseHoldings(ocr)
-  const holdings = preferOcrHoldings(ocrHoldings, visionHoldings)
+  const holdings = preferOcrHoldings(ocrHoldings, visionHoldings, ocr.text || '')
   onProgress?.({ progress: 1, status: '识别完成' })
   return {
     ...ocr,

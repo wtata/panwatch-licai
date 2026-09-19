@@ -52,6 +52,20 @@ def test_normalize_keeps_name_only_app_rows_and_drops_overlay_tickers():
     ]
 
 
+def test_normalize_drops_invented_odd_lots_and_short_names():
+    items = normalize_vision_items(
+        [
+            {"market": "CN", "code": "300071", "name": "福石控股", "quantity": 449, "avgCost": 4.134},
+            {"market": "CN", "code": "", "name": "多多", "quantity": 100, "avgCost": 36.208},
+            {"market": "CN", "code": "", "name": "技术", "quantity": 600, "avgCost": 17.876},
+            {"market": "CN", "code": "603881", "name": "数据港", "quantity": 200, "avgCost": 27.553},
+        ]
+    )
+    assert [(row["name"], row["code"], row["quantity"]) for row in items] == [
+        ("数据港", "603881", 200.0),
+    ]
+
+
 def test_decode_data_url_rejects_empty_and_accepts_jpeg_header():
     with pytest.raises(ValueError, match="缺少截图"):
         decode_data_url("")

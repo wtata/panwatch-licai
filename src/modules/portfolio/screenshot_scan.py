@@ -21,13 +21,14 @@ VISION_SYSTEM_PROMPT = """你是持仓表格提取器。用户会给你一张券
 - 顶栏券商名（如华宝证券）、买入/卖出/持仓/查询按钮
 - 总资产、持仓/可用/市值汇总、当日盈亏、持仓份额。这些汇总数字不是持仓明细
 - 同一只股票只输出一行，不要把名称拆成「股份/技术」再输出一遍
+- 不要输出截图上看不到的股票，不要编造创业板/科创板代码或名称
 - 会议共享浮窗、浏览器、桌面窗口里出现的美股代码（V/A/O/AAPL 等）
 - 名称下方单独一行的市值（带千分位逗号的大数，如 3,696.05）
 
 【同花顺 App 常见列（无证券代码）】
 从左到右通常是：名称 | 盈亏 | 持仓 | 成本/现价
 - name：左侧中文简称，如浙江鼎业、沪电股份
-- quantity：只取「持仓」列整数（700/500/100）。不要用盈亏、不要用可卖、不要用市值
+- quantity：只取「持仓」列整数（700/500/100）。不要用盈亏、不要用可卖、不要用市值。A 股持仓通常是 100 的整数倍，不是则跳过该行
 - avgCost：只取最右侧「成本/现价」列（如 5.362、7.372）。不要用盈亏（-82.23、-303.86），不要用市值
 - code：App 截图经常没有代码。没有就填空字符串，不要编造，不要把持仓数量/盈亏数字当成代码
 - 持仓为 0 的行跳过
@@ -139,6 +140,9 @@ _CHROME_RE = re.compile(
     r"配号买入|资产分析|Realty|Visa|Agilent|BHEM|^买入$|^卖出$|^持仓$|^查询$"
 )
 _CN_NAME_RE = re.compile(r"[\u4e00-\u9fa5]{2,}")
+_GENERIC_NAME_RE = re.compile(
+    r"^(股份|科技|技术|集团|国际|软件|数据|控股|发展|投资|资源|材料|电气|通信|制药|生物|医疗|有限|公司)$"
+)
 
 
 def _is_chrome_text(text: str) -> bool:
@@ -166,6 +170,10 @@ def normalize_vision_items(items: list[Any] | None) -> list[dict]:
         avg_cost = _to_number(item.get("avgCost") or item.get("costPrice") or item.get("cost_price"))
         if quantity is None or quantity <= 0 or avg_cost is None or avg_cost <= 0:
             continue
+        compact_name = re.sub(r"\s+", "", name)
+        if _GENERIC_NAME_RE.match(compact_name):
+            continue
+        chinese_len = len(re.findall(r"[\u4e00-\u9fa5]", compact_name))
         code_token = re.sub(r"[^A-Z0-9.]", "", raw_code.upper())
         if code_token and _US_CODE.match(code_token) and len(code_token) <= 2:
             continue
@@ -181,9 +189,13 @@ def normalize_vision_items(items: list[Any] | None) -> list[dict]:
             n = int(code)
             if n >= 1000 and n % 100 == 0:
                 code = ""
+        if market == "CN" and abs(quantity - round(quantity)) < 1e-9 and int(round(quantity)) % 100 != 0:
+            continue
         if market == "US" and not _CN_NAME_RE.search(name):
             continue
         if not code and not _CN_NAME_RE.search(name):
+            continue
+        if chinese_len < 3 and market == "CN":
             continue
         key = f"{market}:{code}" if code else f"NAME:{name}"
         if key in seen:

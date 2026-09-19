@@ -300,6 +300,19 @@ function isChineseStockName(text: string): boolean {
   return true
 }
 
+export function nameAppearsInOcrText(name: string, ocrText: string): boolean {
+  const n = cleanStockName(name)
+  if (!n) return false
+  const compact = (ocrText || '').replace(/\s+/g, '')
+  return compact.includes(n)
+}
+
+export function filterHoldingsByOcrText(rows: ParsedHolding[], ocrText: string): ParsedHolding[] {
+  const compact = (ocrText || '').replace(/\s+/g, '')
+  if (compact.length < 8) return rows
+  return rows.filter((row) => nameAppearsInOcrText(row.name, ocrText))
+}
+
 export function namesCompatible(ocrName: string, officialName: string): boolean {
   const a = cleanStockName(ocrName)
   const b = cleanStockName(officialName)
@@ -610,6 +623,23 @@ function completeness(row: ParsedHolding): number {
   return (row.quantity != null ? 2 : 0) + (row.avgCost != null ? 2 : 0) + (row.name ? 1 : 0) - row.warnings.length * 0.1
 }
 
+function uniqueByCleanName(rows: ParsedHolding[]): ParsedHolding[] {
+  const byName = new Map<string, ParsedHolding>()
+  const order: string[] = []
+  for (const row of rows) {
+    const key = cleanStockName(row.name)
+    const prev = byName.get(key)
+    if (!prev) {
+      order.push(key)
+      byName.set(key, row)
+      continue
+    }
+    const betterSymbol = Boolean(row.symbol && !prev.symbol)
+    if (betterSymbol || completeness(row) > completeness(prev)) byName.set(key, row)
+  }
+  return order.map((key) => byName.get(key)!)
+}
+
 function uniqueHoldings(rows: ParsedHolding[]): ParsedHolding[] {
   const byKey = new Map<string, ParsedHolding>()
   for (const row of rows) {
@@ -617,7 +647,7 @@ function uniqueHoldings(rows: ParsedHolding[]): ParsedHolding[] {
     const prev = byKey.get(key)
     if (!prev || completeness(row) > completeness(prev)) byKey.set(key, row)
   }
-  return dedupeByQtyCost(Array.from(byKey.values()))
+  return uniqueByCleanName(dedupeByQtyCost(Array.from(byKey.values())))
 }
 
 function qtyCostKey(row: ParsedHolding): string | null {
@@ -691,7 +721,9 @@ export function mergeParsedHoldings(primary: ParsedHolding[], secondary: ParsedH
 
 export function isPlausibleHolding(row: ParsedHolding): boolean {
   if (!isChineseStockName(row.name)) return false
+  if ((row.market || 'CN') === 'CN' && cleanStockName(row.name).length < 3) return false
   if (row.quantity == null || row.quantity <= 0 || row.avgCost == null || row.avgCost <= 0) return false
+  if (row.market === 'CN' && (!Number.isInteger(row.quantity) || row.quantity % 100 !== 0)) return false
   if (row.symbol) {
     const n = Number(row.symbol)
     if (row.market === 'HK' && Number.isFinite(n) && n >= 1000 && n % 100 === 0) return false
@@ -718,11 +750,15 @@ export function sanitizeHoldings(rows: ParsedHolding[]): ParsedHolding[] {
   }))))
 }
 
-export function preferOcrHoldings(ocr: ParsedHolding[], vision: ParsedHolding[]): ParsedHolding[] {
+export function preferOcrHoldings(
+  ocr: ParsedHolding[],
+  vision: ParsedHolding[],
+  ocrText = '',
+): ParsedHolding[] {
   const fromOcr = sanitizeHoldings(ocr)
   const fromVision = sanitizeHoldings(vision)
-  if (fromOcr.length > 0) {
-    return fromOcr.map((row) => {
+  const fillCodes = (rows: ParsedHolding[]) =>
+    uniqueHoldings(rows.map((row) => {
       const hit = fromVision.find((item) => namesCompatible(item.name, row.name))
       if (!hit?.symbol || row.symbol) return row
       return {
@@ -731,9 +767,9 @@ export function preferOcrHoldings(ocr: ParsedHolding[], vision: ParsedHolding[])
         market: hit.market,
         warnings: row.warnings.filter((item) => !item.includes('证券代码')),
       }
-    })
-  }
-  return fromVision
+    }))
+  if (fromOcr.length > 0) return fillCodes(fromOcr)
+  return fillCodes(filterHoldingsByOcrText(fromVision, ocrText))
 }
 
 export function holdingsFromVisionItems(items: Array<Record<string, unknown>>): ParsedHolding[] {
