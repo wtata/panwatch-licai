@@ -97,8 +97,9 @@ function looksLikePrice(token: NumberToken): boolean {
   return token.value >= 0.01 && token.value <= 100000 && (!token.isInt || token.value < 20000)
 }
 
-function looksLikeQty(token: NumberToken): boolean {
-  return token.isInt && token.value >= 1 && token.value <= 1e8
+function looksLikeQty(token: NumberToken, allowZero = false): boolean {
+  const min = allowZero ? 0 : 1
+  return token.isInt && token.value >= min && token.value <= 1e8
 }
 
 function isPnlToken(token: NumberToken): boolean {
@@ -113,22 +114,27 @@ function pickQtyAndCost(
   const warnings: string[] = []
   // 同花顺 App：名称 | 盈亏(忽略) | 持仓/可用(取上) | 成本/现价(取上)
   // 桌面表：持仓数量、可卖数量、成本价、现价、市值、盈亏
-  const useful = numbers.filter((n) => !isPnlToken(n) && n.value > 0)
+  const useful = numbers.filter((n) => !isPnlToken(n) && n.value >= 0)
   if (useful.length === 0) {
     return { quantity: null, avgCost: null, warnings: ['未识别到数量和成本'] }
   }
 
   let start = 0
-  while (start < useful.length && !looksLikeQty(useful[start])) start += 1
+  while (start < useful.length && !looksLikeQty(useful[start], true)) start += 1
   const rest = useful.slice(start)
+  const firstQty = rest[0] && looksLikeQty(rest[0], true) ? rest[0].value : null
+  if (firstQty === 0) {
+    return { quantity: 0, avgCost: null, warnings: ['持仓为 0，已跳过'] }
+  }
 
-  let quantity: number | null = rest[0] && looksLikeQty(rest[0]) ? rest[0].value : null
+  const quantity = firstQty != null && firstQty > 0 ? firstQty : null
   let afterQty = rest.slice(1)
   if (quantity != null && afterQty[0] && looksLikeQty(afterQty[0])) {
     afterQty = afterQty.slice(1)
   }
 
   const costCandidates = afterQty.filter((n) => {
+    if (n.value <= 0) return false
     if (looksLikeMarketValue(n.value, quantity)) return false
     return looksLikePrice(n)
   })
@@ -284,6 +290,17 @@ export function cleanStockName(text: string): string {
 
 const GENERIC_NAME_RE = /^(股份|科技|技术|集团|国际|软件|数据|控股|发展|投资|资源|材料|电气|通信|制药|生物|医疗|有限|公司)$/
 
+const OCR_NAME_FIXES: Record<string, string> = {
+  多多: '多氟多',
+  多弗多: '多氟多',
+  多氟夕: '多氟多',
+}
+
+export function repairOcrStockName(name: string): string {
+  const t = cleanStockName(name)
+  return OCR_NAME_FIXES[t] || t
+}
+
 function isChineseStockName(text: string): boolean {
   const t = cleanStockName(text)
   if (t.length < 2 || t.length > 10) return false
@@ -356,6 +373,7 @@ function parseMobileNameRow(tokens: string[], sourceConfidence?: number): Parsed
     name = joined
     consumed += 1
   }
+  name = repairOcrStockName(name)
   if (!isChineseStockName(name)) return null
 
   const rest = cleaned.slice(start + consumed)
@@ -772,7 +790,7 @@ function dropNameFragments(rows: ParsedHolding[]): ParsedHolding[] {
 export function sanitizeHoldings(rows: ParsedHolding[]): ParsedHolding[] {
   return uniqueHoldings(dropNameFragments(rows.filter(isPlausibleHolding).map((row) => ({
     ...row,
-    name: cleanStockName(row.name),
+    name: repairOcrStockName(row.name),
   }))))
 }
 
@@ -786,9 +804,14 @@ export function preferOcrHoldings(
   const fillCodes = (rows: ParsedHolding[]) =>
     uniqueHoldings(rows.map((row) => {
       const hit = fromVision.find((item) => namesCompatible(item.name, row.name))
-      if (!hit?.symbol || row.symbol) return row
+      const visionName = hit ? repairOcrStockName(hit.name) : ''
+      const name = visionName && namesCompatible(row.name, visionName) && visionName.length > cleanStockName(row.name).length
+        ? visionName
+        : repairOcrStockName(row.name)
+      if (!hit?.symbol || row.symbol) return { ...row, name }
       return {
         ...row,
+        name,
         symbol: hit.symbol,
         market: hit.market,
         warnings: row.warnings.filter((item) => !item.includes('证券代码')),
@@ -853,12 +876,12 @@ export function toEditableRows(holdings: ParsedHolding[]): EditableHoldingRow[] 
 
 export function sanitizeEditableHoldings(rows: EditableHoldingRow[]): EditableHoldingRow[] {
   return rows.filter((row) => {
-    const name = cleanStockName(row.name)
+    const name = repairOcrStockName(row.name)
     const market = row.market || inferMarket(row.symbol || '')
     const quantity = Number.parseInt(String(row.quantity).replace(/[,\s]/g, ''), 10)
     if (!isChineseStockName(name)) return false
-    if (market === 'CN' && (!Number.isInteger(quantity) || quantity % 100 !== 0)) return false
+    if (market === 'CN' && (!Number.isInteger(quantity) || quantity % 100 !== 0 || quantity <= 0)) return false
     if (market === 'CN' && name.length < 3) return false
     return true
-  })
+  }).map((row) => ({ ...row, name: repairOcrStockName(row.name) }))
 }

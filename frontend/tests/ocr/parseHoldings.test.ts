@@ -81,6 +81,17 @@ V 维萨
     expect(rows[3]).toMatchObject({ quantity: 100, avgCost: 529.28, market: 'HK' })
   })
 
+  it('skips hidden 0-quantity rows instead of using 可用, and repairs 多多 to 多氟多', () => {
+    const rows = parseHoldingsFromText(`
+福石控股 -4.134 0 449 4.134
+多多 -12.08 100 36.208
+四维图新 -15.51% 0 13.63
+`)
+    expect(rows.map((row) => ({ name: row.name, quantity: row.quantity, avgCost: row.avgCost }))).toEqual([
+      { name: '多氟多', quantity: 100, avgCost: 36.208 },
+    ])
+  })
+
   it('ignores 盈亏 and keeps the upper 持仓/成本 of stacked cells', () => {
     const rows = parseHoldingsFromText(`
 道氏技术 -32.17 400 17.876
@@ -228,12 +239,12 @@ describe('sanitizeHoldings', () => {
       { symbol: '300071', name: '福石控股', market: 'CN', quantity: 449, avgCost: 4.134, warnings: [] },
       { symbol: '', name: '多多', market: 'CN', quantity: 100, avgCost: 36.208, warnings: [] },
       { symbol: '603881', name: '数据港', market: 'CN', quantity: 200, avgCost: 27.553, warnings: [] },
-    ]).map((row) => row.name)).toEqual(['多多', '数据港'])
+    ]).map((row) => row.name)).toEqual(['多氟多', '数据港'])
     expect(sanitizeEditableHoldings(toEditableRows([
       { symbol: '', name: '多多', market: 'CN', quantity: 100, avgCost: 36.208, warnings: [] },
       { symbol: '002407', name: '多氟多', market: 'CN', quantity: 100, avgCost: 36.208, warnings: [] },
       { symbol: '300071', name: '福石控股', market: 'CN', quantity: 449, avgCost: 4.134, warnings: [] },
-    ])).map((row) => row.name)).toEqual(['多氟多'])
+    ])).map((row) => row.name)).toEqual(['多氟多', '多氟多'])
 
     const merged = preferOcrHoldings(ocr, vision, ocrText)
     expect(merged.map((row) => row.name)).toEqual(['浙江鼎业', '数据港', '道氏技术'])
