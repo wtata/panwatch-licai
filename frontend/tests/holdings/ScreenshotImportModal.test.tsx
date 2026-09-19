@@ -91,6 +91,7 @@ describe('ScreenshotImportModal', () => {
         if (decodeURIComponent(query).includes('多氟多')) {
           nameSearches += 1
           if (nameSearches === 1) return []
+          await new Promise((resolve) => setTimeout(resolve, 120))
           return [{ symbol: '002407', name: '多氟多', market: 'CN' }]
         }
         return []
@@ -124,6 +125,8 @@ describe('ScreenshotImportModal', () => {
     await user.type(nameInput, '多氟多')
     fireEvent.blur(nameInput)
 
+    expect(await screen.findByText('正在匹配代码…')).toBeTruthy()
     expect(await screen.findByDisplayValue('002407')).toBeTruthy()
+    expect(screen.queryByText('正在匹配代码…')).toBeNull()
   })
 })
