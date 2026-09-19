@@ -1576,13 +1576,21 @@ if os.path.exists(static_dir):
     from fastapi.staticfiles import StaticFiles
     from fastapi.responses import FileResponse
 
-    # SPA 路由：所有非 API 请求返回 index.html
+    # SPA 路由：所有非 API 请求返回 index.html（html 禁止缓存，避免本地开发打到旧前端）
     @app.get("/{path:path}")
     async def serve_spa(path: str):
         file_path = os.path.join(static_dir, path)
+        nocache = {"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"}
         if os.path.isfile(file_path):
-            return FileResponse(file_path)
-        return FileResponse(os.path.join(static_dir, "index.html"))
+            resp = FileResponse(file_path)
+            if file_path.endswith(".html"):
+                for key, value in nocache.items():
+                    resp.headers[key] = value
+            return resp
+        resp = FileResponse(os.path.join(static_dir, "index.html"))
+        for key, value in nocache.items():
+            resp.headers[key] = value
+        return resp
 
     logger.info(f"静态文件服务已启用: {static_dir}")
 
