@@ -81,4 +81,49 @@ describe('ScreenshotImportModal', () => {
       expect(onImported).toHaveBeenCalled()
     })
   })
+
+  it('fills the security code after the user edits a stock name', async () => {
+    const user = userEvent.setup()
+    let nameSearches = 0
+    fetchAPI.mockImplementation(async (path: string) => {
+      const query = String(path)
+      if (query.includes('/stocks/search')) {
+        if (decodeURIComponent(query).includes('多氟多')) {
+          nameSearches += 1
+          if (nameSearches === 1) return []
+          return [{ symbol: '002407', name: '多氟多', market: 'CN' }]
+        }
+        return []
+      }
+      return { id: 1 }
+    })
+    const recognizeImage = vi.fn().mockResolvedValue({
+      text: '多氟多 -12.08 100 36.208',
+      words: [],
+    })
+
+    render(
+      <ScreenshotImportModal
+        open
+        onOpenChange={vi.fn()}
+        accounts={[{ id: 3, name: '华宝证券' }]}
+        defaultAccountId={3}
+        existingStocks={[]}
+        existingPositions={[]}
+        onImported={vi.fn()}
+        recognizeImage={recognizeImage}
+      />,
+    )
+
+    const file = new File(['fake-image'], 'holdings.png', { type: 'image/png' })
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [file] } })
+
+    const nameInput = await screen.findByDisplayValue('多氟多')
+    expect(screen.queryByDisplayValue('002407')).toBeNull()
+    await user.clear(nameInput)
+    await user.type(nameInput, '多氟多')
+    fireEvent.blur(nameInput)
+
+    expect(await screen.findByDisplayValue('002407')).toBeTruthy()
+  })
 })

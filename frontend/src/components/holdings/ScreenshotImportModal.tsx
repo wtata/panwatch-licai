@@ -153,8 +153,45 @@ export default function ScreenshotImportModal({
     [rows],
   )
 
+  const rematchTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const rematchSeq = useRef<Record<string, number>>({})
+
+  const rematchRow = useCallback(async (id: string, next: EditableHoldingRow) => {
+    const seq = (rematchSeq.current[id] || 0) + 1
+    rematchSeq.current[id] = seq
+    const enriched = await enrichRowFromSearch(next, importDeps.searchStocks)
+    if (rematchSeq.current[id] !== seq) return
+    setRows((prev) => prev.map((row) => {
+      if (row.id !== id) return row
+      const matched = Boolean(enriched.symbol)
+      return {
+        ...row,
+        ...enriched,
+        quantity: next.quantity,
+        avgCost: next.avgCost,
+        selected: matched ? true : row.selected,
+      }
+    }))
+  }, [])
+
+  const latestRow = (id: string) => {
+    setRows((prev) => {
+      const row = prev.find((item) => item.id === id)
+      if (row) void rematchRow(id, row)
+      return prev
+    })
+  }
+
   const updateRow = (id: string, patch: Partial<EditableHoldingRow>) => {
     setRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)))
+    if (!('name' in patch) && !('symbol' in patch)) return
+    window.clearTimeout(rematchTimers.current[id])
+    rematchTimers.current[id] = setTimeout(() => latestRow(id), 350)
+  }
+
+  const rematchOnBlur = (id: string) => {
+    window.clearTimeout(rematchTimers.current[id])
+    latestRow(id)
   }
 
   const handleConfirm = async () => {
@@ -205,7 +242,12 @@ export default function ScreenshotImportModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent
+        className="max-w-3xl"
+        onPointerDownOutside={(event) => event.preventDefault()}
+        onInteractOutside={(event) => event.preventDefault()}
+        onEscapeKeyDown={(event) => event.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle>截图导入持仓</DialogTitle>
           <DialogDescription>
@@ -317,10 +359,20 @@ export default function ScreenshotImportModal({
                             />
                           </td>
                           <td className="px-2 py-1.5">
-                            <Input className="h-8 px-2 font-mono" value={row.symbol} onChange={(event) => updateRow(row.id, { symbol: event.target.value })} />
+                            <Input
+                              className="h-8 px-2 font-mono"
+                              value={row.symbol}
+                              onChange={(event) => updateRow(row.id, { symbol: event.target.value })}
+                              onBlur={() => rematchOnBlur(row.id)}
+                            />
                           </td>
                           <td className="px-2 py-1.5">
-                            <Input className="h-8 px-2" value={row.name} onChange={(event) => updateRow(row.id, { name: event.target.value })} />
+                            <Input
+                              className="h-8 px-2"
+                              value={row.name}
+                              onChange={(event) => updateRow(row.id, { name: event.target.value })}
+                              onBlur={() => rematchOnBlur(row.id)}
+                            />
                           </td>
                           <td className="px-2 py-1.5">
                             <Input className="h-8 px-2 font-mono" value={row.quantity} onChange={(event) => updateRow(row.id, { quantity: event.target.value })} />
