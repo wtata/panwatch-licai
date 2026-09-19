@@ -101,45 +101,39 @@ function looksLikeQty(token: NumberToken): boolean {
   return token.isInt && token.value >= 1 && token.value <= 1e8
 }
 
+function isPnlToken(token: NumberToken): boolean {
+  if (token.isPercent) return true
+  return /^[+\-]/.test(token.raw.trim())
+}
+
 function pickQtyAndCost(
   numbers: NumberToken[],
   market: ParsedHolding['market'],
 ): { quantity: number | null; avgCost: number | null; warnings: string[] } {
   const warnings: string[] = []
-  // App：名称 盈亏 持仓 成本/现价；桌面表：持仓数量、可卖数量、成本价、现价、市值、盈亏
-  const useful = numbers.filter((n) => !n.isPercent && n.value > 0)
+  // 同花顺 App：名称 | 盈亏(忽略) | 持仓/可用(取上) | 成本/现价(取上)
+  // 桌面表：持仓数量、可卖数量、成本价、现价、市值、盈亏
+  const useful = numbers.filter((n) => !isPnlToken(n) && n.value > 0)
   if (useful.length === 0) {
     return { quantity: null, avgCost: null, warnings: ['未识别到数量和成本'] }
   }
 
-  let quantity: number | null = null
-  let avgCost: number | null = null
+  let start = 0
+  while (start < useful.length && !looksLikeQty(useful[start])) start += 1
+  const rest = useful.slice(start)
 
-  const last = useful[useful.length - 1]
-  const qtyFromRight = [...useful.slice(0, -1)].reverse().find(looksLikeQty)
-  const first = useful[0]
-  const mobileShape = looksLikePrice(last)
-    && qtyFromRight != null
-    && (
-      useful.length <= 3
-      || looksLikeMarketValue(first.value, qtyFromRight.value)
-      || first.value > qtyFromRight.value * 3
-    )
-
-  if (mobileShape && qtyFromRight) {
-    quantity = qtyFromRight.value
-    avgCost = last.value
-  } else {
-    const qtyCandidates = useful.filter(looksLikeQty)
-    if (qtyCandidates.length > 0) quantity = qtyCandidates[0].value
-    const afterQty = quantity == null ? useful : useful.filter((n) => n.value !== quantity)
-    const costCandidates = afterQty.filter((n) => {
-      if (looksLikeMarketValue(n.value, quantity)) return false
-      return n.value >= 0.01 && n.value <= 100000
-    })
-    const withDecimal = costCandidates.find((n) => !n.isInt || n.raw.includes('.'))
-    avgCost = (withDecimal || costCandidates[0] || null)?.value ?? null
+  let quantity: number | null = rest[0] && looksLikeQty(rest[0]) ? rest[0].value : null
+  let afterQty = rest.slice(1)
+  if (quantity != null && afterQty[0] && looksLikeQty(afterQty[0])) {
+    afterQty = afterQty.slice(1)
   }
+
+  const costCandidates = afterQty.filter((n) => {
+    if (looksLikeMarketValue(n.value, quantity)) return false
+    return looksLikePrice(n)
+  })
+  const withDecimal = costCandidates.find((n) => !n.isInt || n.raw.includes('.'))
+  const avgCost = (withDecimal || costCandidates[0] || null)?.value ?? null
 
   if (quantity == null) warnings.push('未识别到持仓数量')
   if (avgCost == null) warnings.push('未识别到成本价')
@@ -402,6 +396,15 @@ function isHeaderLine(text: string): boolean {
   return (hits?.length ?? 0) >= 2 || (/证券代码/.test(text) && /持仓/.test(text))
 }
 
+function isStackedContinuationLine(text: string): boolean {
+  const t = text.trim()
+  if (!t) return false
+  if (/[\u4e00-\u9fa5]{2,}/.test(t)) return false
+  const first = t.split(/\s+/)[0] || ''
+  if (parseSecurityCode(first) || /^\d{6}$/.test(t.replace(/\s/g, ''))) return false
+  return /^[\d.+\-%％HK$￥¥,\s]+$/i.test(t)
+}
+
 function parseRowTokens(tokens: string[], sourceConfidence?: number): ParsedHolding | null {
   const cleaned = tokens.flatMap(splitLineTokens)
   if (cleaned.length === 0) return null
@@ -502,14 +505,22 @@ export function parseHoldingsFromWords(words: OcrWord[]): ParsedHolding[] {
   const rows = groupWordsIntoRows(mergeDigitFragments(words.filter((w) => w.text.trim())))
   const headers = detectHeaderColumns(rows)
   const holdings: ParsedHolding[] = []
-  for (const row of rows) {
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
     const joined = row.map((word) => word.text).join(' ')
     if (isHeaderLine(joined) || isSummaryLine(joined)) continue
+    const next = rows[i + 1]
+    const nextJoined = next?.map((word) => word.text).join(' ') || ''
+    const tokens = [...row.map((word) => word.text)]
+    if (next && isStackedContinuationLine(nextJoined)) {
+      tokens.push(...next.map((word) => word.text))
+      i += 1
+    }
     const confidenceSum = row.reduce((sum, word) => sum + word.confidence, 0)
     const confidence = row.length ? confidenceSum / row.length : undefined
     const fromColumns = headers ? holdingFromColumns(assignWordsToColumns(row, headers), confidence) : null
-    const fromMobile = parseMobileNameRow(row.map((word) => word.text), confidence)
-    const fromTokens = parseRowTokens(row.map((word) => word.text), confidence)
+    const fromMobile = parseMobileNameRow(tokens, confidence)
+    const fromTokens = parseRowTokens(tokens, confidence)
     const parsed = pickBestRowParse(fromMobile, fromColumns, fromTokens)
     if (parsed) holdings.push(parsed)
   }
@@ -536,6 +547,10 @@ export function parseHoldingsFromText(text: string): ParsedHolding[] {
       && !/^[\u4e00-\u9fa5.*]{2,8}$/.test(lines[i + 1].split(/\s+/)[0] || '')
     ) {
       lineTokens = [line, ...lines[i + 1].split(/\s+/)]
+    }
+    if (i + 1 < lines.length && isStackedContinuationLine(lines[i + 1])) {
+      lineTokens = [...lineTokens, ...lines[i + 1].split(/\s+/)]
+      i += 1
     }
 
     const mobile = parseMobileNameRow(lineTokens)

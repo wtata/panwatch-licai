@@ -80,6 +80,29 @@ V 维萨
     expect(rows[3]).toMatchObject({ quantity: 100, avgCost: 529.28, market: 'HK' })
   })
 
+  it('ignores 盈亏 and keeps the upper 持仓/成本 of stacked cells', () => {
+    const rows = parseHoldingsFromText(`
+道氏技术 -32.17 400 17.876
+-0.45% 600 18.201
+浙江鼎业 -82.23 700 700 5.362 5.401
+中国石化 34.86 100 100 4.401 4.550
+`)
+    expect(rows.map((row) => ({ name: row.name, quantity: row.quantity, avgCost: row.avgCost }))).toEqual([
+      { name: '道氏技术', quantity: 400, avgCost: 17.876 },
+      { name: '浙江鼎业', quantity: 700, avgCost: 5.362 },
+      { name: '中国石化', quantity: 100, avgCost: 4.401 },
+    ])
+  })
+
+  it('uses the top number when OCR words stack 持仓/可用 and 成本/现价', () => {
+    const rows = parseHoldingsFromWords(wordsFromRows([
+      ['道氏技术', '-32.17', '400', '17.876'],
+      ['-0.45%', '600', '18.201'],
+    ]))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ name: '道氏技术', quantity: 400, avgCost: 17.876 })
+  })
+
   it('ignores account totals and duplicate qty/cost rows', () => {
     const rows = parseHoldings({
       text: `

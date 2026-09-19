@@ -97,4 +97,6 @@ def test_screenshot_scan_endpoint_sends_image_to_vision_client(tmp_path, monkeyp
     ]
     system, user = client.chat.call_args.args
     assert "可卖数量" in system and "成本价" in system
+    assert "持仓/可用" in system and "成本/现价" in system
+    assert "整列忽略" in user or "忽略盈亏" in user
     assert client.chat.call_args.kwargs["images"]
