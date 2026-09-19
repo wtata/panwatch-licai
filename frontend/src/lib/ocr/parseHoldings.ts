@@ -282,13 +282,26 @@ export function cleanStockName(text: string): string {
     .replace(/[^\u4e00-\u9fa5A-Za-z0-9.*]/g, '')
 }
 
+const GENERIC_NAME_RE = /^(股份|科技|技术|集团|国际|软件|数据|控股|发展|投资|资源|材料|电气|通信|制药|生物|医疗|有限|公司)$/
+
 function isChineseStockName(text: string): boolean {
   const t = cleanStockName(text)
   if (t.length < 2 || t.length > 10) return false
   if (!/[\u4e00-\u9fa5]{2,}/.test(t)) return false
+  if (GENERIC_NAME_RE.test(t)) return false
   if (HEADER_RE.test(t) || SKIP_LINE_RE.test(t) || CHROME_RE.test(t)) return false
   if (/持仓|盈亏|成本|现价|市值|可卖|合计|可用|证券/.test(t)) return false
   return true
+}
+
+export function namesCompatible(ocrName: string, officialName: string): boolean {
+  const a = cleanStockName(ocrName)
+  const b = cleanStockName(officialName)
+  if (!a || !b) return false
+  if (a === b) return true
+  if (a.length >= 3 && (b.includes(a) || a.includes(b))) return true
+  if (b.length >= 3 && (a.includes(b) || b.includes(a))) return true
+  return false
 }
 
 function parseMobileNameRow(tokens: string[], sourceConfidence?: number): ParsedHolding | null {
@@ -304,11 +317,24 @@ function parseMobileNameRow(tokens: string[], sourceConfidence?: number): Parsed
   let start = 0
   while (start < cleaned.length && !isChineseStockName(cleaned[start])) start += 1
 
-  const nameToken = cleaned[start] || ''
-  const name = cleanStockName(nameToken)
+  let name = cleanStockName(cleaned[start] || '')
+  if (!isChineseStockName(name)) return null
+  let consumed = 1
+  while (start + consumed < cleaned.length) {
+    const nxtRaw = cleaned[start + consumed]
+    if (parseNumberToken(nxtRaw) && !/[\u4e00-\u9fa5]/.test(nxtRaw)) break
+    const nxt = cleanStockName(nxtRaw)
+    if (!/[\u4e00-\u9fa5]{1,4}/.test(nxt)) break
+    const joined = name + nxt
+    const suffix = GENERIC_NAME_RE.test(nxt) || nxt.length <= 2
+    if (!suffix && nxt.length >= 3 && isChineseStockName(nxt)) break
+    if (joined.length > 8) break
+    name = joined
+    consumed += 1
+  }
   if (!isChineseStockName(name)) return null
 
-  const rest = cleaned.slice(start + 1)
+  const rest = cleaned.slice(start + consumed)
   const numberTokens = rest
     .flatMap((token) => token.split(/(?=[+\-])|(?<=%)/))
     .map(parseNumberToken)
@@ -643,19 +669,30 @@ export function isPlausibleHolding(row: ParsedHolding): boolean {
   return true
 }
 
+function dropNameFragments(rows: ParsedHolding[]): ParsedHolding[] {
+  return rows.filter((row) => {
+    const name = cleanStockName(row.name)
+    if (GENERIC_NAME_RE.test(name)) return false
+    return !rows.some((other) => {
+      const otherName = cleanStockName(other.name)
+      return otherName !== name && otherName.includes(name) && name.length <= 3 && otherName.length > name.length
+    })
+  })
+}
+
 export function sanitizeHoldings(rows: ParsedHolding[]): ParsedHolding[] {
-  return uniqueHoldings(rows.filter(isPlausibleHolding).map((row) => ({
+  return uniqueHoldings(dropNameFragments(rows.filter(isPlausibleHolding).map((row) => ({
     ...row,
     name: cleanStockName(row.name),
-  })))
+  }))))
 }
 
 export function preferOcrHoldings(ocr: ParsedHolding[], vision: ParsedHolding[]): ParsedHolding[] {
   const fromOcr = sanitizeHoldings(ocr)
   const fromVision = sanitizeHoldings(vision)
-  if (fromOcr.length >= 5) {
+  if (fromOcr.length > 0) {
     return fromOcr.map((row) => {
-      const hit = fromVision.find((item) => cleanStockName(item.name) === cleanStockName(row.name))
+      const hit = fromVision.find((item) => namesCompatible(item.name, row.name))
       if (!hit?.symbol || row.symbol) return row
       return {
         ...row,
@@ -665,7 +702,7 @@ export function preferOcrHoldings(ocr: ParsedHolding[], vision: ParsedHolding[])
       }
     })
   }
-  return uniqueHoldings([...fromOcr, ...fromVision])
+  return fromVision
 }
 
 export function holdingsFromVisionItems(items: Array<Record<string, unknown>>): ParsedHolding[] {

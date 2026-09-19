@@ -37,6 +37,29 @@ describe('enrichRowFromSearch', () => {
     expect(row.symbol).toBe('603955')
     expect(row.warnings).toEqual([])
   })
+
+  it('does not overwrite OCR name with a mismatched code lookup', async () => {
+    const searchStocks = vi.fn(async (query: string) => {
+      if (query === '002172') return [{ symbol: '002172', name: '澳洋健康', market: 'CN' }]
+      if (query === '浙江鼎业') return [{ symbol: '603955', name: '浙江鼎业', market: 'CN' }]
+      return []
+    })
+    const row = await enrichRowFromSearch(
+      {
+        id: '2',
+        selected: true,
+        symbol: '002172',
+        name: '浙江鼎业',
+        market: 'CN',
+        quantity: '700',
+        avgCost: '5.362',
+        warnings: [],
+      },
+      searchStocks,
+    )
+    expect(row.symbol).toBe('603955')
+    expect(row.name).toBe('浙江鼎业')
+  })
 })
 
 describe('parseRowNumbers', () => {

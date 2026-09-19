@@ -1,4 +1,4 @@
-import { inferMarket, normalizeSymbol, parseSecurityCode, cleanStockName } from './parseHoldings'
+import { inferMarket, normalizeSymbol, parseSecurityCode, cleanStockName, namesCompatible } from './parseHoldings'
 import type { EditableHoldingRow, PositionRef, StockRef } from './types'
 
 export interface SearchHit {
@@ -62,12 +62,31 @@ export async function enrichRowFromSearch(
       const symbol = normalizeSymbol(parsedCode.symbol, parsedCode.market)
       const hits = await searchStocks(symbol, parsedCode.market)
       const exact = hits.find((hit) => sameSymbol(hit.symbol, hit.market, symbol, parsedCode.market))
-      if (exact) {
+      if (exact && namesCompatible(row.name, exact.name)) {
         return {
           ...row,
           symbol: normalizeSymbol(exact.symbol, (exact.market as EditableHoldingRow['market']) || parsedCode.market),
           name: exact.name || row.name,
           market: (exact.market as EditableHoldingRow['market']) || parsedCode.market,
+        }
+      }
+      if (exact && nameQuery && !namesCompatible(row.name, exact.name)) {
+        const nameHits = await searchStocks(nameQuery, '')
+        const exactName = nameHits.find((hit) => hit.name === nameQuery)
+        if (exactName) {
+          return {
+            ...row,
+            symbol: normalizeSymbol(exactName.symbol, (exactName.market as EditableHoldingRow['market']) || inferMarket(exactName.symbol)),
+            name: exactName.name || nameQuery,
+            market: (exactName.market as EditableHoldingRow['market']) || inferMarket(exactName.symbol),
+            warnings: row.warnings.filter((item) => !item.includes('证券代码')),
+          }
+        }
+        return {
+          ...row,
+          symbol: '',
+          selected: false,
+          warnings: [...row.warnings.filter((item) => !item.includes('未能精确')), '代码与名称不一致，请手选'],
         }
       }
     }
@@ -81,7 +100,7 @@ export async function enrichRowFromSearch(
     if (!exactName) {
       return parsedCode
         ? { ...row, symbol: normalizeSymbol(parsedCode.symbol, parsedCode.market), market: parsedCode.market }
-        : { ...row, selected: false, warnings: [...row.warnings, '未能精确匹配证券代码，请手选'] }
+        : { ...row, selected: false, warnings: [...row.warnings.filter((item) => !item.includes('未能精确')), '未能精确匹配证券代码，请手选'] }
     }
     return {
       ...row,

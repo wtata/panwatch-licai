@@ -155,6 +155,20 @@ describe('sanitizeHoldings', () => {
     expect(merged.find((row) => row.name === '中国石化')?.symbol).toBe('600028')
     expect(merged.find((row) => row.name === '澳洋健康')).toBeUndefined()
   })
+
+  it('drops generic name fragments like 技术/股份', () => {
+    const rows = parseHoldings({
+      text: `
+道氏技术 -32.17 400 17.876
+技术 600 17.876
+数据港 -67.62 200 27.553
+数据 200 27.553
+翠微股份 -57.58 300 11.569
+股份 200 12.7
+`,
+    })
+    expect(rows.map((row) => row.name).sort()).toEqual(['数据港', '翠微股份', '道氏技术'].sort())
+  })
 })
 
 describe('findDarkContentBox', () => {
