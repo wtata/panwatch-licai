@@ -53,7 +53,7 @@ _CN_CODE = re.compile(r"^\d{6}$")
 _HK_CODE = re.compile(r"^\d{4,5}$")
 _US_CODE = re.compile(r"^[A-Z]{1,5}(?:\.[A-Z])?$")
 _CN_PREFIX = re.compile(
-    r"^(00[0-3]|002|003|1[35689]|20[0-4]|30[013]|39[09]|4[3-9]|50[0-9]|51[0-9]|52[0-9]|56[0-3]|58[08]|60[0135]|68[89]|8[0-9]|9[02])"
+    r"^(00[0-3]|002|003|1[35689]|20[0-4]|30[013]|39[09]|43|50[0-9]|51[0-9]|52[0-9]|56[0-3]|58[08]|60[0135]|68[89]|83|87|88|920|9[02])"
 )
 
 
@@ -159,6 +159,8 @@ def normalize_vision_items(items: list[Any] | None) -> list[dict]:
         name = str(item.get("name") or "").strip()
         if _is_chrome_text(raw_code) or _is_chrome_text(name):
             continue
+        if re.search(r"证券-?\d|正在共享", name):
+            continue
         quantity = _to_number(item.get("quantity"))
         avg_cost = _to_number(item.get("avgCost") or item.get("costPrice") or item.get("cost_price"))
         if quantity is None or quantity <= 0 or avg_cost is None or avg_cost <= 0:
@@ -172,6 +174,16 @@ def normalize_vision_items(items: list[Any] | None) -> list[dict]:
         if not code_token:
             market = "HK" if str(item.get("market") or "").upper() == "HK" else "CN"
         code = normalize_code(raw_code, market) if code_token else ""
+        if market == "CN" and code.isdigit() and not _CN_PREFIX.match(code):
+            code = ""
+        if market == "HK" and code.isdigit():
+            n = int(code)
+            if n >= 1000 and n % 100 == 0:
+                code = ""
+        if market == "US" and not _CN_NAME_RE.search(name):
+            continue
+        if not code and not _CN_NAME_RE.search(name):
+            continue
         key = f"{market}:{code}" if code else f"NAME:{name}"
         if key in seen:
             continue

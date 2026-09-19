@@ -1,4 +1,4 @@
-import { inferMarket, normalizeSymbol, parseSecurityCode } from './parseHoldings'
+import { inferMarket, normalizeSymbol, parseSecurityCode, cleanStockName } from './parseHoldings'
 import type { EditableHoldingRow, PositionRef, StockRef } from './types'
 
 export interface SearchHit {
@@ -56,35 +56,43 @@ export async function enrichRowFromSearch(
   searchStocks: HoldingImportDeps['searchStocks'],
 ): Promise<EditableHoldingRow> {
   const parsedCode = parseSecurityCode(row.symbol)
-  const query = parsedCode ? normalizeSymbol(parsedCode.symbol, parsedCode.market) : row.name.trim()
-  if (!query) return row
-  const market = parsedCode ? parsedCode.market : ''
+  const nameQuery = cleanStockName(row.name)
   try {
-    const hits = await searchStocks(query, market)
     if (parsedCode) {
-      const symbol = query
+      const symbol = normalizeSymbol(parsedCode.symbol, parsedCode.market)
+      const hits = await searchStocks(symbol, parsedCode.market)
       const exact = hits.find((hit) => sameSymbol(hit.symbol, hit.market, symbol, parsedCode.market))
-      if (!exact) return { ...row, symbol, market: parsedCode.market }
-      return {
-        ...row,
-        symbol: normalizeSymbol(exact.symbol, (exact.market as EditableHoldingRow['market']) || parsedCode.market),
-        name: exact.name || row.name,
-        market: (exact.market as EditableHoldingRow['market']) || parsedCode.market,
+      if (exact) {
+        return {
+          ...row,
+          symbol: normalizeSymbol(exact.symbol, (exact.market as EditableHoldingRow['market']) || parsedCode.market),
+          name: exact.name || row.name,
+          market: (exact.market as EditableHoldingRow['market']) || parsedCode.market,
+        }
       }
     }
-    const exactName = hits.find((hit) => hit.name === row.name)
-      || hits.find((hit) => hit.name.includes(row.name) || row.name.includes(hit.name))
-    if (!exactName) return row
+    if (!nameQuery) {
+      return parsedCode
+        ? { ...row, symbol: normalizeSymbol(parsedCode.symbol, parsedCode.market), market: parsedCode.market }
+        : row
+    }
+    const nameHits = await searchStocks(nameQuery, '')
+    const exactName = nameHits.find((hit) => hit.name === nameQuery)
+    if (!exactName) {
+      return parsedCode
+        ? { ...row, symbol: normalizeSymbol(parsedCode.symbol, parsedCode.market), market: parsedCode.market }
+        : { ...row, selected: false, warnings: [...row.warnings, '未能精确匹配证券代码，请手选'] }
+    }
     return {
       ...row,
       symbol: normalizeSymbol(exactName.symbol, (exactName.market as EditableHoldingRow['market']) || inferMarket(exactName.symbol)),
-      name: exactName.name || row.name,
+      name: exactName.name || nameQuery,
       market: (exactName.market as EditableHoldingRow['market']) || inferMarket(exactName.symbol),
       warnings: row.warnings.filter((item) => !item.includes('证券代码')),
     }
   } catch {
     return parsedCode
-      ? { ...row, symbol: query, market: parsedCode.market }
+      ? { ...row, symbol: normalizeSymbol(parsedCode.symbol, parsedCode.market), market: parsedCode.market }
       : row
   }
 }

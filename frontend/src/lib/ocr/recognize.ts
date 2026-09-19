@@ -37,19 +37,133 @@ function loadImage(file: Blob): Promise<HTMLImageElement> {
   })
 }
 
-export async function preprocessImage(file: Blob): Promise<HTMLCanvasElement> {
+export function findDarkContentBox(
+  width: number,
+  height: number,
+  grayAt: (x: number, y: number) => number,
+): { x: number; y: number; w: number; h: number } | null {
+  if (width < 80 || height < 80) return null
+  const stepY = Math.max(1, Math.floor(height / 180))
+  const stepX = Math.max(1, Math.floor(width / 220))
+  const colScore = new Float64Array(width)
+  let darkSamples = 0
+  let samples = 0
+  for (let x = 0; x < width; x += stepX) {
+    let dark = 0
+    let rows = 0
+    for (let y = 0; y < height; y += stepY) {
+      samples += 1
+      rows += 1
+      if (grayAt(x, y) < 85) {
+        darkSamples += 1
+        dark += 1
+      }
+    }
+    const fill = dark / Math.max(1, rows)
+    for (let dx = 0; dx < stepX && x + dx < width; dx++) colScore[x + dx] = fill
+  }
+  if (darkSamples / Math.max(1, samples) > 0.5) return null
+
+  let bestLo = 0
+  let bestHi = -1
+  let lo = -1
+  for (let x = 0; x < width; x++) {
+    if (colScore[x] >= 0.1) {
+      if (lo < 0) lo = x
+    } else if (lo >= 0) {
+      if (x - 1 - lo > bestHi - bestLo) {
+        bestLo = lo
+        bestHi = x - 1
+      }
+      lo = -1
+    }
+  }
+  if (lo >= 0 && width - 1 - lo > bestHi - bestLo) {
+    bestLo = lo
+    bestHi = width - 1
+  }
+  const boxW = bestHi - bestLo + 1
+  if (bestHi < bestLo || boxW < 60 || boxW > width * 0.82) return null
+
+  let minY = height
+  let maxY = 0
+  for (let y = 0; y < height; y += stepY) {
+    let hit = false
+    for (let x = bestLo; x <= bestHi; x += stepX) {
+      if (grayAt(x, y) < 85) {
+        hit = true
+        break
+      }
+    }
+    if (hit) {
+      minY = Math.min(minY, y)
+      maxY = Math.max(maxY, y)
+    }
+  }
+  if (maxY <= minY) return null
+  const padX = Math.round(boxW * 0.04)
+  const padY = Math.round((maxY - minY) * 0.02)
+  const x = Math.max(0, bestLo - padX)
+  const y = Math.max(0, minY - padY)
+  const w = Math.min(width - x, boxW + padX * 2)
+  const h = Math.min(height - y, maxY - minY + padY * 2)
+  if (w < 50 || h < 80) return null
+  return { x, y, w, h }
+}
+
+async function canvasFromBlob(file: Blob): Promise<HTMLCanvasElement> {
   const img = await loadImage(file)
+  const canvas = document.createElement('canvas')
+  canvas.width = img.width
+  canvas.height = img.height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('无法创建画布')
+  ctx.drawImage(img, 0, 0)
+  return canvas
+}
+
+export async function cropHoldingsCanvas(file: Blob): Promise<HTMLCanvasElement> {
+  const src = await canvasFromBlob(file)
+  const ctx = src.getContext('2d')
+  if (!ctx) return src
+  const imageData = ctx.getImageData(0, 0, src.width, src.height)
+  const grayAt = (x: number, y: number) => {
+    const i = (y * src.width + x) * 4
+    return 0.299 * imageData.data[i] + 0.587 * imageData.data[i + 1] + 0.114 * imageData.data[i + 2]
+  }
+  const box = findDarkContentBox(src.width, src.height, grayAt)
+  if (!box) return src
+  const cropped = document.createElement('canvas')
+  cropped.width = box.w
+  cropped.height = box.h
+  const croppedCtx = cropped.getContext('2d')
+  if (!croppedCtx) return src
+  croppedCtx.drawImage(src, box.x, box.y, box.w, box.h, 0, 0, box.w, box.h)
+  return cropped
+}
+
+export async function canvasToJpeg(canvas: HTMLCanvasElement, quality = 0.92): Promise<Blob> {
+  return await new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob)
+      else reject(new Error('截图编码失败'))
+    }, 'image/jpeg', quality)
+  })
+}
+
+export async function preprocessImage(file: Blob): Promise<HTMLCanvasElement> {
+  const cropped = await cropHoldingsCanvas(file)
   const maxEdge = 2800
-  const natural = Math.max(img.width, img.height)
+  const natural = Math.max(cropped.width, cropped.height)
   const scale = natural < 1200 ? 2 : natural > maxEdge ? maxEdge / natural : 1.4
   const canvas = document.createElement('canvas')
-  canvas.width = Math.max(1, Math.round(img.width * scale))
-  canvas.height = Math.max(1, Math.round(img.height * scale))
+  canvas.width = Math.max(1, Math.round(cropped.width * scale))
+  canvas.height = Math.max(1, Math.round(cropped.height * scale))
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('无法创建画布')
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'high'
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+  ctx.drawImage(cropped, 0, 0, canvas.width, canvas.height)
 
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
   const data = imageData.data

@@ -9,7 +9,7 @@ const CN_CODE_RE = /^\d{6}$/
 const HK_CODE_RE = /^\d{4,5}$/
 const US_CODE_RE = /^[A-Z]{1,5}(?:\.[A-Z])?$/
 
-const CN_PREFIX_RE = /^(00[0-3]|002|003|1[35689]|20[0-4]|30[013]|39[09]|4[3-9]|50[0-9]|51[0-9]|52[0-9]|56[0-3]|58[08]|60[0135]|68[89]|8[0-9]|9[02])/
+const CN_PREFIX_RE = /^(00[0-3]|002|003|1[35689]|20[0-4]|30[013]|39[09]|43|50[0-9]|51[0-9]|52[0-9]|56[0-3]|58[08]|60[0135]|68[89]|83|87|88|920|9[02])/
 
 export function toAsciiDigits(input: string): string {
   return input
@@ -53,9 +53,11 @@ export function parseSecurityCode(raw: string): { symbol: string; market: Parsed
   const token = normalizeDigitish(raw)
   if (isCnSecurityCode(token)) return { symbol: token, market: 'CN' }
   if (HK_CODE_RE.test(token) && token.length >= 4) {
+    if (token.length === 5 && !token.startsWith('0')) return null
     const symbol = token.padStart(5, '0')
-    // 10000+ 更像数量而不是港股代码
-    if (Number(symbol) >= 10000 && Number(symbol) % 100 === 0) return null
+    const n = Number(symbol)
+    if (n >= 10000 && n % 100 === 0) return null
+    if (n >= 1000 && n % 100 === 0 && (token.startsWith('0') || token.length === 4)) return null
     return { symbol, market: 'HK' }
   }
   const us = token.toUpperCase()
@@ -273,8 +275,15 @@ function isSummaryLine(text: string): boolean {
   return SKIP_LINE_RE.test(text) || CHROME_RE.test(text) || /正在共享/.test(text)
 }
 
+export function cleanStockName(text: string): string {
+  return text
+    .replace(/\s+/g, '')
+    .replace(/[-–—]?\d+(?:\.\d+)?$/, '')
+    .replace(/[^\u4e00-\u9fa5A-Za-z0-9.*]/g, '')
+}
+
 function isChineseStockName(text: string): boolean {
-  const t = text.replace(/\s+/g, '').replace(/\d+(?:\.\d+)?$/, '')
+  const t = cleanStockName(text)
   if (t.length < 2 || t.length > 10) return false
   if (!/[\u4e00-\u9fa5]{2,}/.test(t)) return false
   if (HEADER_RE.test(t) || SKIP_LINE_RE.test(t) || CHROME_RE.test(t)) return false
@@ -290,12 +299,13 @@ function parseMobileNameRow(tokens: string[], sourceConfidence?: number): Parsed
   if (cleaned.length === 0) return null
   const joined = cleaned.join(' ')
   if (isSummaryLine(joined) || isHeaderLine(joined)) return null
+  if (parseSecurityCode(cleaned[0])) return null
 
   let start = 0
-  while (start < cleaned.length && /^[A-Z]{1,2}$/.test(cleaned[start])) start += 1
+  while (start < cleaned.length && !isChineseStockName(cleaned[start])) start += 1
 
   const nameToken = cleaned[start] || ''
-  const name = nameToken.replace(/\d+(?:\.\d+)?$/, '')
+  const name = cleanStockName(nameToken)
   if (!isChineseStockName(name)) return null
 
   const rest = cleaned.slice(start + 1)
@@ -475,10 +485,10 @@ export function parseHoldingsFromText(text: string): ParsedHolding[] {
 
     let lineTokens = line.split(/\s+/)
     if (
-      isChineseStockName(line)
+      /^[\u4e00-\u9fa5.*]{2,8}$/.test(line)
       && i + 1 < lines.length
       && /[\d.%％]/.test(lines[i + 1])
-      && !isChineseStockName(lines[i + 1].split(/\s+/)[0] || '')
+      && !/^[\u4e00-\u9fa5.*]{2,8}$/.test(lines[i + 1].split(/\s+/)[0] || '')
     ) {
       lineTokens = [line, ...lines[i + 1].split(/\s+/)]
     }
@@ -490,7 +500,7 @@ export function parseHoldingsFromText(text: string): ParsedHolding[] {
     }
 
     const direct = parseRowTokens(lineTokens)
-    if (direct && (direct.quantity != null || direct.avgCost != null || direct.name)) {
+    if (direct && direct.quantity != null && direct.avgCost != null && (direct.name || direct.symbol)) {
       if (!direct.name && i > 0 && /[\u4e00-\u9fa5]/.test(lines[i - 1]) && !parseSecurityCode(lines[i - 1])) {
         direct.name = lines[i - 1].replace(/\s+/g, '')
         direct.warnings = direct.warnings.filter((w) => w !== '未识别到股票名称')
@@ -501,9 +511,16 @@ export function parseHoldingsFromText(text: string): ParsedHolding[] {
 
     const codeOnly = parseSecurityCode(line.replace(/\s+/g, ''))
     if (!codeOnly) continue
-    const windowLines = lines.slice(Math.max(0, i - 2), Math.min(lines.length, i + 5))
-    const windowTokens = windowLines.join(' ').split(/\s+/)
-    const parsed = parseRowTokens([codeOnly.symbol, ...windowTokens.filter((t) => t !== line)])
+    const nearby: string[] = []
+    if (i > 0 && isChineseStockName(lines[i - 1])) nearby.push(lines[i - 1])
+    nearby.push(line)
+    for (let j = i + 1; j < Math.min(lines.length, i + 4); j++) {
+      const first = lines[j].split(/\s+/)[0] || ''
+      if (parseSecurityCode(first)) break
+      if (isChineseStockName(first) && !/持仓|成本/.test(lines[j])) break
+      nearby.push(lines[j])
+    }
+    const parsed = parseRowTokens([codeOnly.symbol, ...nearby.join(' ').split(/\s+/).filter((t) => t !== line)])
     if (parsed) holdings.push(parsed)
   }
   return uniqueHoldings(holdings)
@@ -615,11 +632,47 @@ export function mergeParsedHoldings(primary: ParsedHolding[], secondary: ParsedH
   return keys.map((k) => byKey.get(k)!)
 }
 
+export function isPlausibleHolding(row: ParsedHolding): boolean {
+  if (!isChineseStockName(row.name)) return false
+  if (row.quantity == null || row.quantity <= 0 || row.avgCost == null || row.avgCost <= 0) return false
+  if (row.symbol) {
+    const n = Number(row.symbol)
+    if (row.market === 'HK' && Number.isFinite(n) && n >= 1000 && n % 100 === 0) return false
+    if (row.market === 'US' && !isChineseStockName(row.name) && row.symbol.length < 4) return false
+  }
+  return true
+}
+
+export function sanitizeHoldings(rows: ParsedHolding[]): ParsedHolding[] {
+  return uniqueHoldings(rows.filter(isPlausibleHolding).map((row) => ({
+    ...row,
+    name: cleanStockName(row.name),
+  })))
+}
+
+export function preferOcrHoldings(ocr: ParsedHolding[], vision: ParsedHolding[]): ParsedHolding[] {
+  const fromOcr = sanitizeHoldings(ocr)
+  const fromVision = sanitizeHoldings(vision)
+  if (fromOcr.length >= 5) {
+    return fromOcr.map((row) => {
+      const hit = fromVision.find((item) => cleanStockName(item.name) === cleanStockName(row.name))
+      if (!hit?.symbol || row.symbol) return row
+      return {
+        ...row,
+        symbol: hit.symbol,
+        market: hit.market,
+        warnings: row.warnings.filter((item) => !item.includes('证券代码')),
+      }
+    })
+  }
+  return uniqueHoldings([...fromOcr, ...fromVision])
+}
+
 export function holdingsFromVisionItems(items: Array<Record<string, unknown>>): ParsedHolding[] {
   const holdings: ParsedHolding[] = []
   for (const item of items) {
     const rawCode = String(item.code ?? item.symbol ?? '').trim()
-    const name = String(item.name ?? '').trim().replace(/\d+(?:\.\d+)?$/, '')
+    const name = cleanStockName(String(item.name ?? '').trim())
     if (CHROME_RE.test(rawCode) || CHROME_RE.test(name) || /正在共享|可用成本/.test(name)) continue
     const parsedCode = parseSecurityCode(rawCode)
     if (!parsedCode && !isChineseStockName(name)) continue
@@ -642,25 +695,23 @@ export function holdingsFromVisionItems(items: Array<Record<string, unknown>>): 
       warnings,
     })
   }
-  return uniqueHoldings(holdings)
+  return sanitizeHoldings(holdings)
 }
 
 export function isReliableVisionHoldings(rows: ParsedHolding[]): boolean {
-  if (rows.length === 0) return false
-  const good = rows.filter((row) => isChineseStockName(row.name) && row.quantity != null && row.avgCost != null)
-  return good.length > 0 && good.length >= rows.length * 0.5
+  return sanitizeHoldings(rows).length > 0
 }
 
 export function parseHoldings(input: { text: string; words?: OcrWord[] }): ParsedHolding[] {
   const fromWords = input.words?.length ? parseHoldingsFromWords(input.words) : []
   const fromText = parseHoldingsFromText(input.text || '')
-  return mergeParsedHoldings(fromWords, fromText)
+  return sanitizeHoldings(mergeParsedHoldings(fromWords, fromText))
 }
 
 export function toEditableRows(holdings: ParsedHolding[]): EditableHoldingRow[] {
   return holdings.map((row, index) => ({
     id: `${row.market}-${row.symbol}-${index}`,
-    selected: Boolean(row.quantity && row.avgCost && (row.symbol || row.name)),
+    selected: Boolean(row.quantity && row.avgCost && row.name && (row.symbol || isChineseStockName(row.name))),
     symbol: row.symbol,
     name: row.name,
     market: row.market,

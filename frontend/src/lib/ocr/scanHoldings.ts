@@ -1,6 +1,6 @@
 import { fetchAPI } from '@panwatch/api'
-import { holdingsFromVisionItems, isReliableVisionHoldings, parseHoldings } from './parseHoldings'
-import { recognizeHoldingsImage, type RecognizeProgress, type RecognizeResult } from './recognize'
+import { holdingsFromVisionItems, parseHoldings, preferOcrHoldings } from './parseHoldings'
+import { canvasToJpeg, cropHoldingsCanvas, recognizeHoldingsImage, type RecognizeProgress, type RecognizeResult } from './recognize'
 import type { ParsedHolding } from './types'
 
 export interface ScanHoldingsResult extends RecognizeResult {
@@ -39,26 +39,29 @@ export async function scanHoldingsImage(
   file: Blob,
   onProgress?: (info: RecognizeProgress) => void,
 ): Promise<ScanHoldingsResult> {
-  onProgress?.({ progress: 0.05, status: '正在用视觉模型读取持仓列' })
+  onProgress?.({ progress: 0.04, status: '正在裁切持仓区域' })
+  let prepared = file
   try {
-    const holdings = await scanHoldingsViaVision(file)
-    if (isReliableVisionHoldings(holdings)) {
-      onProgress?.({ progress: 1, status: '视觉识别完成' })
-      return {
-        text: holdings.map((row) => `${row.symbol} ${row.name} ${row.quantity ?? ''} ${row.avgCost ?? ''}`).join('\n'),
-        words: [],
-        holdings,
-        source: 'vision',
-      }
-    }
+    prepared = await canvasToJpeg(await cropHoldingsCanvas(file))
+  } catch {
+    prepared = file
+  }
+
+  let visionHoldings: ParsedHolding[] = []
+  onProgress?.({ progress: 0.08, status: '正在用视觉模型读取持仓列' })
+  try {
+    visionHoldings = await scanHoldingsViaVision(prepared)
   } catch {
     // 未配置多模态模型或接口失败时，回退本地 OCR。
   }
 
-  const ocr = await recognizeHoldingsImage(file, onProgress)
+  const ocr = await recognizeHoldingsImage(prepared, onProgress)
+  const ocrHoldings = parseHoldings(ocr)
+  const holdings = preferOcrHoldings(ocrHoldings, visionHoldings)
+  onProgress?.({ progress: 1, status: '识别完成' })
   return {
     ...ocr,
-    holdings: parseHoldings(ocr),
-    source: 'ocr',
+    holdings,
+    source: ocrHoldings.length >= 5 ? 'ocr' : visionHoldings.length ? 'vision' : 'ocr',
   }
 }

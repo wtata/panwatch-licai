@@ -42,12 +42,13 @@ def test_normalize_keeps_name_only_app_rows_and_drops_overlay_tickers():
             {"market": "CN", "code": "", "name": "浙江鼎业", "quantity": 700, "avgCost": 5.362},
             {"market": "US", "code": "V", "name": "维萨", "quantity": 0, "avgCost": 0},
             {"market": "CN", "code": "", "name": "华宝证券", "quantity": 1, "avgCost": 1},
-            {"market": "CN", "code": "沪电股份", "name": "沪电股份", "quantity": 500, "avgCost": 7.372},
+            {"market": "CN", "code": "865007", "name": "连热电", "quantity": 500, "avgCost": 7.812},
+            {"market": "HK", "code": "03000", "name": "香港证券-9.543", "quantity": 1, "avgCost": 1.799},
         ]
     )
     assert [(row["name"], row["code"], row["quantity"], row["avgCost"]) for row in items] == [
         ("浙江鼎业", "", 700.0, 5.362),
-        ("沪电股份", "", 500.0, 7.372),
+        ("连热电", "", 500.0, 7.812),
     ]
 
 

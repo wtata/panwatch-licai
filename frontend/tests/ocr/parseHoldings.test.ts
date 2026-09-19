@@ -4,8 +4,11 @@ import {
   parseHoldingsFromText,
   parseHoldingsFromWords,
   parseSecurityCode,
+  preferOcrHoldings,
+  sanitizeHoldings,
   toEditableRows,
 } from '@/lib/ocr/parseHoldings'
+import { findDarkContentBox } from '@/lib/ocr/recognize'
 import type { OcrWord } from '@/lib/ocr/types'
 
 function wordsFromRows(rows: string[][]): OcrWord[] {
@@ -37,6 +40,9 @@ describe('parseSecurityCode', () => {
     expect(parseSecurityCode('700')).toBeNull()
     expect(parseSecurityCode('00700')).toEqual({ symbol: '00700', market: 'HK' })
     expect(parseSecurityCode('10000')).toBeNull()
+    expect(parseSecurityCode('03000')).toBeNull()
+    expect(parseSecurityCode('01500')).toBeNull()
+    expect(parseSecurityCode('865007')).toBeNull()
   })
 
   it('does not treat 1-2 letter UI fragments as US tickers', () => {
@@ -72,6 +78,24 @@ V 维萨
     expect(rows[1]).toMatchObject({ quantity: 100, avgCost: 4.401 })
     expect(rows[2]).toMatchObject({ quantity: 500, avgCost: 7.372 })
     expect(rows[3]).toMatchObject({ quantity: 100, avgCost: 529.28, market: 'HK' })
+  })
+
+  it('drops overlay leftovers and quantity-as-code rows', () => {
+    const rows = parseHoldings({
+      text: `
+BQCCC
+865007 连热电 500 7.812
+001518 春光科技53.060
+03000 香港证券-9.543 1.799
+01500 现恒建筑 3.227
+33210
+陕西黑猫 -1.702 500 3.828
+`,
+    })
+    expect(rows.map((row) => ({ name: row.name, quantity: row.quantity, avgCost: row.avgCost, symbol: row.symbol }))).toEqual([
+      { name: '连热电', quantity: 500, avgCost: 7.812, symbol: '' },
+      { name: '陕西黑猫', quantity: 500, avgCost: 3.828, symbol: '' },
+    ])
   })
 
   it('parses compact card-style mobile screenshots', () => {
@@ -112,15 +136,46 @@ describe('parseHoldingsFromWords', () => {
   })
 })
 
+describe('sanitizeHoldings', () => {
+  it('prefers OCR names when OCR already has a full table', () => {
+    const ocr = sanitizeHoldings(parseHoldingsFromText(`
+浙江鼎业 -82.23 700 5.362
+中国石化 34.86 100 4.401
+沪电股份 -303.86 500 7.372
+陕西黑猫 -1.702 500 3.828
+翠微股份 -57.58 300 11.569
+数据港 -67.62 200 27.553
+`))
+    const vision = [
+      { symbol: '002172', name: '澳洋健康', market: 'CN' as const, quantity: 700, avgCost: 58.24, warnings: [] },
+      { symbol: '600028', name: '中国石化', market: 'CN' as const, quantity: 100, avgCost: 4.401, warnings: [] },
+    ]
+    const merged = preferOcrHoldings(ocr, vision)
+    expect(merged.map((row) => row.name)).toEqual(ocr.map((row) => row.name))
+    expect(merged.find((row) => row.name === '中国石化')?.symbol).toBe('600028')
+    expect(merged.find((row) => row.name === '澳洋健康')).toBeUndefined()
+  })
+})
+
+describe('findDarkContentBox', () => {
+  it('crops a dark holdings strip on a mostly white canvas', () => {
+    const width = 200
+    const height = 120
+    const box = findDarkContentBox(width, height, (x) => (x >= 120 ? 20 : 250))
+    expect(box).not.toBeNull()
+    expect(box!.x).toBeGreaterThanOrEqual(100)
+    expect(box!.w).toBeLessThan(110)
+  })
+})
+
 describe('parseHoldings', () => {
-  it('merges word and text results and flags incomplete rows', () => {
+  it('merges word and text results and keeps complete rows', () => {
     const rows = parseHoldings({
       text: '600519 贵州茅台 100 1423.56\n000001 平安银行',
       words: wordsFromRows([['600519', '贵州茅台', '100', '1423.56']]),
     })
-    expect(rows).toHaveLength(2)
-    const pingAn = rows.find((row) => row.symbol === '000001')
-    expect(pingAn?.warnings.some((item) => item.includes('数量') || item.includes('成本'))).toBe(true)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ symbol: '600519', name: '贵州茅台', quantity: 100 })
     const editable = toEditableRows(rows)
     expect(editable[0].selected).toBe(true)
     expect(editable[0].quantity).toBe('100')
