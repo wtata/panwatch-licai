@@ -95,7 +95,7 @@ export async function recognizeHoldingsImage(
 
   try {
     await worker.setParameters({
-      tessedit_pageseg_mode: tesseract.PSM.SPARSE_TEXT,
+      tessedit_pageseg_mode: tesseract.PSM.SINGLE_BLOCK,
       preserve_interword_spaces: '1',
     })
     const { data } = await worker.recognize(canvas)

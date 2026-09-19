@@ -53,9 +53,11 @@ class AIClient:
             for img_path in images:
                 img_data = self._encode_image(img_path)
                 if img_data:
+                    suffix = Path(img_path).suffix.lower()
+                    mime = "image/jpeg" if suffix in {".jpg", ".jpeg"} else "image/png"
                     content_parts.append({
                         "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{img_data}"}
+                        "image_url": {"url": f"data:{mime};base64,{img_data}"}
                     })
             messages.append({"role": "user", "content": content_parts})
         else:

@@ -77,6 +77,14 @@ describe('parseHoldingsFromWords', () => {
     expect(rows[0]).toMatchObject({ symbol: '600519', name: '贵州茅台', quantity: 100, avgCost: 1423.56 })
     expect(rows[1]).toMatchObject({ symbol: '000858', name: '五粮液', quantity: 200, avgCost: 128.5 })
   })
+
+  it('uses header columns so 现价/可卖数量 are not taken as 成本/持仓', () => {
+    const headers = ['证券代码', '证券名称', '持仓数量', '可卖数量', '成本价', '现价', '最新市值']
+    const data = ['600519', '贵州茅台', '100', '80', '1423.56', '1480.00', '148000']
+    const rows = parseHoldingsFromWords(wordsFromRows([headers, data]))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ symbol: '600519', name: '贵州茅台', quantity: 100, avgCost: 1423.56 })
+  })
 })
 
 describe('parseHoldings', () => {

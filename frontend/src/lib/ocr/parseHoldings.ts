@@ -79,11 +79,17 @@ function parseNumberToken(raw: string): NumberToken | null {
   return { value: Math.abs(value), raw, isInt, isPercent }
 }
 
+function looksLikeMarketValue(value: number, quantity: number | null): boolean {
+  if (quantity == null) return value >= 10000 && Number.isInteger(value)
+  return value >= 10000 && value > quantity * 20
+}
+
 function pickQtyAndCost(
   numbers: NumberToken[],
   market: ParsedHolding['market'],
 ): { quantity: number | null; avgCost: number | null; warnings: string[] } {
   const warnings: string[] = []
+  // 同花顺桌面表从左到右通常是：持仓数量、可卖数量、成本价、现价、最新市值、盈亏
   const useful = numbers.filter((n) => !n.isPercent && n.value > 0)
   if (useful.length === 0) {
     return { quantity: null, avgCost: null, warnings: ['未识别到数量和成本'] }
@@ -94,20 +100,18 @@ function pickQtyAndCost(
 
   const qtyCandidates = useful.filter((n) => n.isInt && n.value >= 1 && n.value <= 1e8)
   if (qtyCandidates.length > 0) {
-    const lotLike = qtyCandidates.find((n) => {
-      if (market === 'CN') return n.value % 100 === 0 || n.value % 10 === 0
-      return true
-    })
-    quantity = (lotLike || qtyCandidates[0]).value
+    quantity = qtyCandidates[0].value
   }
 
-  const costCandidates = useful.filter((n) => {
-    if (quantity != null && n.value === quantity) return false
-    if (quantity != null && n.value > quantity * 500 && n.value >= 10000) return false
+  const afterQty = quantity == null
+    ? useful
+    : useful.filter((n) => n.value !== quantity)
+  const costCandidates = afterQty.filter((n) => {
+    if (looksLikeMarketValue(n.value, quantity)) return false
     return n.value >= 0.01 && n.value <= 100000
   })
-  const withDecimal = costCandidates.find((n) => !n.isInt) || costCandidates.find((n) => n.raw.includes('.'))
-  avgCost = (withDecimal || costCandidates.find((n) => quantity == null || n.value !== quantity) || null)?.value ?? null
+  const withDecimal = costCandidates.find((n) => !n.isInt || n.raw.includes('.'))
+  avgCost = (withDecimal || costCandidates[0] || null)?.value ?? null
 
   if (quantity == null) warnings.push('未识别到持仓数量')
   if (avgCost == null) warnings.push('未识别到成本价')
@@ -118,6 +122,118 @@ function pickQtyAndCost(
     warnings.push('成本价异常偏高，请核对')
   }
   return { quantity, avgCost, warnings }
+}
+
+type ColumnKey = 'code' | 'name' | 'qty' | 'sellable' | 'cost' | 'price' | 'mv' | 'pnl'
+
+interface HeaderCol {
+  key: ColumnKey
+  x: number
+}
+
+function classifyHeaderToken(text: string): ColumnKey | null {
+  const t = toAsciiDigits(text).replace(/\s+/g, '')
+  if (/可卖/.test(t)) return 'sellable'
+  if (/证券代码|^代码$/.test(t)) return 'code'
+  if (/证券名称|^名称$/.test(t)) return 'name'
+  if (/持仓数量|持股数量|持仓股数|^持股$|^持仓$/.test(t)) return 'qty'
+  if (/成本/.test(t)) return 'cost'
+  if (/现价|最新价|当前价/.test(t)) return 'price'
+  if (/市值/.test(t)) return 'mv'
+  if (/盈亏/.test(t)) return 'pnl'
+  return null
+}
+
+export function detectHeaderColumns(rows: OcrWord[][]): HeaderCol[] | null {
+  for (const row of rows.slice(0, 8)) {
+    const cols: HeaderCol[] = []
+    for (const word of row) {
+      const key = classifyHeaderToken(word.text)
+      if (!key) continue
+      cols.push({ key, x: (word.bbox.x0 + word.bbox.x1) / 2 })
+    }
+    const keys = new Set(cols.map((col) => col.key))
+    if (keys.has('code') && (keys.has('qty') || keys.has('cost') || keys.has('name'))) {
+      return cols.sort((a, b) => a.x - b.x)
+    }
+  }
+  return null
+}
+
+function assignWordsToColumns(row: OcrWord[], headers: HeaderCol[]): Record<ColumnKey, string[]> {
+  const buckets = {
+    code: [],
+    name: [],
+    qty: [],
+    sellable: [],
+    cost: [],
+    price: [],
+    mv: [],
+    pnl: [],
+  } as Record<ColumnKey, string[]>
+  for (const word of row) {
+    const cx = (word.bbox.x0 + word.bbox.x1) / 2
+    let best = headers[0]
+    let bestDist = Number.POSITIVE_INFINITY
+    for (const col of headers) {
+      const dist = Math.abs(cx - col.x)
+      if (dist < bestDist) {
+        best = col
+        bestDist = dist
+      }
+    }
+    if (!best) continue
+    buckets[best.key].push(word.text)
+  }
+  return buckets
+}
+
+function firstNumber(tokens: string[]): number | null {
+  for (const token of tokens) {
+    const parsed = parseNumberToken(token)
+    if (parsed && !parsed.isPercent && parsed.value > 0) return parsed.value
+  }
+  return null
+}
+
+function holdingFromColumns(
+  buckets: Record<ColumnKey, string[]>,
+  sourceConfidence?: number,
+): ParsedHolding | null {
+  const codeTokens = [...buckets.code, ...buckets.name]
+  let parsedCode: { symbol: string; market: ParsedHolding['market'] } | null = null
+  for (const token of codeTokens) {
+    parsedCode = parseSecurityCode(token)
+    if (parsedCode) break
+  }
+  if (!parsedCode) {
+    const compact = codeTokens.join('').match(/(\d{6})/)
+    if (compact) parsedCode = parseSecurityCode(compact[1])
+  }
+  if (!parsedCode) return null
+
+  const name = extractName(buckets.name.length ? buckets.name : buckets.code.filter((token) => !parseSecurityCode(token)))
+  const quantity = firstNumber(buckets.qty) ?? firstNumber(buckets.sellable)
+  const avgCost = firstNumber(buckets.cost)
+  const warnings: string[] = []
+  if (!name) warnings.push('未识别到股票名称')
+  if (quantity == null) warnings.push('未识别到持仓数量')
+  else if (firstNumber(buckets.qty) == null && firstNumber(buckets.sellable) != null) {
+    warnings.push('未读到持仓数量，已用可卖数量代替')
+  }
+  if (avgCost == null) warnings.push('未识别到成本价')
+  if (quantity != null && parsedCode.market === 'CN' && quantity % 100 !== 0) {
+    warnings.push('A 股数量通常为 100 的整数倍，请核对')
+  }
+  if (sourceConfidence != null && sourceConfidence < 60) warnings.push('该行识别置信度偏低')
+  return {
+    symbol: parsedCode.symbol,
+    name,
+    market: parsedCode.market,
+    quantity,
+    avgCost,
+    warnings: Array.from(new Set(warnings)),
+  }
 }
 
 function isSummaryLine(text: string): boolean {
@@ -212,11 +328,14 @@ function mergeDigitFragments(words: OcrWord[]): OcrWord[] {
     const curText = normalizeDigitish(word.text)
     const closeX = word.bbox.x0 - prev.bbox.x1 < Math.max(12, (prev.bbox.x1 - prev.bbox.x0) * 0.6)
     const closeY = Math.abs(((word.bbox.y0 + word.bbox.y1) / 2) - ((prev.bbox.y0 + prev.bbox.y1) / 2)) < 10
-    if (closeX && closeY && /^\d+$/.test(prevText) && /^\d+$/.test(curText) && (prevText + curText).length <= 6) {
-      prev.text = prevText + curText
-      prev.bbox = { ...prev.bbox, x1: Math.max(prev.bbox.x1, word.bbox.x1) }
-      prev.confidence = Math.min(prev.confidence, word.confidence)
-      continue
+    if (closeX && closeY && /^\d+$/.test(prevText) && /^\d+$/.test(curText)) {
+      const combined = prevText + curText
+      if (combined.length === 6) {
+        prev.text = combined
+        prev.bbox = { ...prev.bbox, x1: Math.max(prev.bbox.x1, word.bbox.x1) }
+        prev.confidence = Math.min(prev.confidence, word.confidence)
+        continue
+      }
     }
     merged.push({ ...word })
   }
@@ -247,20 +366,16 @@ export function groupWordsIntoRows(words: OcrWord[]): OcrWord[][] {
 
 export function parseHoldingsFromWords(words: OcrWord[]): ParsedHolding[] {
   const rows = groupWordsIntoRows(mergeDigitFragments(words.filter((w) => w.text.trim())))
+  const headers = detectHeaderColumns(rows)
   const holdings: ParsedHolding[] = []
   for (const row of rows) {
-    const minX = Math.min(...row.map((w) => w.bbox.x0))
-    const maxX = Math.max(...row.map((w) => w.bbox.x1))
-    const width = Math.max(1, maxX - minX)
-    const leftTokens: string[] = []
-    const allTokens: string[] = []
-    let confidenceSum = 0
-    for (const word of row) {
-      allTokens.push(word.text)
-      confidenceSum += word.confidence
-      if ((word.bbox.x0 - minX) / width <= 0.45) leftTokens.push(word.text)
-    }
-    const parsed = parseRowTokens(allTokens.length ? allTokens : leftTokens, confidenceSum / row.length)
+    const joined = row.map((word) => word.text).join(' ')
+    if (isHeaderLine(joined) || isSummaryLine(joined)) continue
+    const confidenceSum = row.reduce((sum, word) => sum + word.confidence, 0)
+    const confidence = row.length ? confidenceSum / row.length : undefined
+    const fromColumns = headers ? holdingFromColumns(assignWordsToColumns(row, headers), confidence) : null
+    const fromTokens = parseRowTokens(row.map((word) => word.text), confidence)
+    const parsed = mergeRowParse(fromColumns, fromTokens)
     if (parsed) holdings.push(parsed)
   }
   return uniqueHoldings(holdings)
@@ -295,6 +410,41 @@ export function parseHoldingsFromText(text: string): ParsedHolding[] {
     if (parsed) holdings.push(parsed)
   }
   return uniqueHoldings(holdings)
+}
+
+function preferCost(primary: number | null, fallback: number | null): number | null {
+  if (primary == null) return fallback
+  if (fallback == null) return primary
+  const primaryLooksQty = Number.isInteger(primary) && primary >= 10
+  const fallbackLooksPrice = !Number.isInteger(fallback)
+  if (primaryLooksQty && fallbackLooksPrice) return fallback
+  return primary
+}
+
+function mergeRowParse(primary: ParsedHolding | null, fallback: ParsedHolding | null): ParsedHolding | null {
+  if (!primary) return fallback
+  if (!fallback) return primary
+  const merged: ParsedHolding = {
+    symbol: primary.symbol,
+    name: primary.name || fallback.name,
+    market: primary.market,
+    quantity: primary.quantity ?? fallback.quantity,
+    avgCost: preferCost(primary.avgCost, fallback.avgCost),
+    warnings: [],
+  }
+  const warnings = new Set<string>()
+  if (!merged.name) warnings.add('未识别到股票名称')
+  if (merged.quantity == null) warnings.add('未识别到持仓数量')
+  if (merged.avgCost == null) warnings.add('未识别到成本价')
+  for (const warning of [...primary.warnings, ...fallback.warnings]) {
+    if (warning === '未识别到股票名称' && merged.name) continue
+    if (warning === '未识别到持仓数量' && merged.quantity != null) continue
+    if (warning === '未识别到成本价' && merged.avgCost != null) continue
+    if (warning.startsWith('未读到持仓数量') && primary.quantity != null) continue
+    warnings.add(warning)
+  }
+  merged.warnings = Array.from(warnings)
+  return merged
 }
 
 function completeness(row: ParsedHolding): number {
@@ -353,6 +503,32 @@ export function mergeParsedHoldings(primary: ParsedHolding[], secondary: ParsedH
     return ia - ib
   })
   return keys.map((k) => byKey.get(k)!)
+}
+
+export function holdingsFromVisionItems(items: Array<Record<string, unknown>>): ParsedHolding[] {
+  const holdings: ParsedHolding[] = []
+  for (const item of items) {
+    const rawCode = String(item.code ?? item.symbol ?? '').trim()
+    const parsedCode = parseSecurityCode(rawCode)
+    if (!parsedCode) continue
+    const marketRaw = String(item.market ?? parsedCode.market).toUpperCase()
+    const market: ParsedHolding['market'] =
+      marketRaw === 'HK' || marketRaw === 'US' ? marketRaw : parsedCode.market
+    const quantity = Number(item.quantity)
+    const avgCost = Number(item.avgCost ?? item.costPrice ?? item.cost_price)
+    const warnings: string[] = []
+    if (!Number.isFinite(quantity) || quantity <= 0) warnings.push('未识别到持仓数量')
+    if (!Number.isFinite(avgCost) || avgCost <= 0) warnings.push('未识别到成本价')
+    holdings.push({
+      symbol: normalizeSymbol(parsedCode.symbol, market),
+      name: String(item.name ?? '').trim(),
+      market,
+      quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : null,
+      avgCost: Number.isFinite(avgCost) && avgCost > 0 ? avgCost : null,
+      warnings,
+    })
+  }
+  return uniqueHoldings(holdings)
 }
 
 export function parseHoldings(input: { text: string; words?: OcrWord[] }): ParsedHolding[] {

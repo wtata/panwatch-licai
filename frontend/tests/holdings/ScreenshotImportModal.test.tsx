@@ -55,7 +55,7 @@ describe('ScreenshotImportModal', () => {
       />,
     )
 
-    expect(screen.getByText('同花顺截图导入')).toBeTruthy()
+    expect(screen.getByText('截图导入持仓')).toBeTruthy()
     const file = new File(['fake-image'], 'holdings.png', { type: 'image/png' })
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [file] } })

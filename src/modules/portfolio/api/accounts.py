@@ -115,6 +115,11 @@ class AccountResponse(BaseModel):
         from_attributes = True
 
 
+class ScreenshotScanRequest(BaseModel):
+    image: str
+    model_id: int | None = None
+
+
 class PositionCreate(BaseModel):
     account_id: int
     stock_id: int
@@ -787,6 +792,49 @@ def portfolio_attribution(days: int = 60, benchmark: str = "000300", db: Session
     if items:  # 空结果不缓存,下轮可重试
         _PORTFOLIO_RESULT_CACHE.set(ckey, result)
     return result
+
+
+@router.post("/portfolio/screenshot-scan")
+async def portfolio_screenshot_scan(data: ScreenshotScanRequest, db: Session = Depends(get_db)):
+    """视觉模型读取持仓截图，按列抽取代码/名称/持仓数量/成本价。"""
+    import tempfile
+    from pathlib import Path
+
+    from src.modules.portfolio.screenshot_scan import (
+        VISION_SYSTEM_PROMPT,
+        VISION_USER_PROMPT,
+        decode_data_url,
+        extract_json_array,
+        normalize_vision_items,
+    )
+    from src.platform.ai.ai_failover import get_configured_failover_client
+
+    try:
+        blob, ext = decode_data_url(data.image)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
+            tmp.write(blob)
+            tmp_path = Path(tmp.name)
+        raw = await get_configured_failover_client(db, data.model_id).chat(
+            VISION_SYSTEM_PROMPT,
+            VISION_USER_PROMPT,
+            images=[str(tmp_path)],
+            temperature=0,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"截图识别失败: {exc}") from exc
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+
+    items = normalize_vision_items(extract_json_array(raw or ""))
+    return {"items": items, "source": "vision", "raw": (raw or "")[:1000]}
 
 
 @router.post("/portfolio/ai-review")

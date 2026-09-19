@@ -9,7 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import { commitHoldingImport, enrichRowFromSearch, parseRowNumbers, type HoldingImportDeps } from '@/lib/ocr/importHoldings'
 import { parseHoldings, toEditableRows } from '@/lib/ocr/parseHoldings'
-import { fileFromPasteEvent, readClipboardImage, recognizeHoldingsImage, type RecognizeResult } from '@/lib/ocr/recognize'
+import { fileFromPasteEvent, readClipboardImage } from '@/lib/ocr/recognize'
+import { scanHoldingsImage, type ScanHoldingsResult } from '@/lib/ocr/scanHoldings'
 import type { EditableHoldingRow, PositionRef, StockRef } from '@/lib/ocr/types'
 
 interface AccountOption {
@@ -25,7 +26,7 @@ interface ScreenshotImportModalProps {
   existingStocks: StockRef[]
   existingPositions: PositionRef[]
   onImported: () => void
-  recognizeImage?: (file: Blob, onProgress?: (info: { progress: number; status: string }) => void) => Promise<RecognizeResult>
+  recognizeImage?: (file: Blob, onProgress?: (info: { progress: number; status: string }) => void) => Promise<ScanHoldingsResult | { text: string; words?: ScanHoldingsResult['words'] }>
 }
 
 type Stage = 'idle' | 'ocr' | 'preview' | 'importing'
@@ -53,7 +54,7 @@ export default function ScreenshotImportModal({
   existingStocks,
   existingPositions,
   onImported,
-  recognizeImage = recognizeHoldingsImage,
+  recognizeImage = scanHoldingsImage,
 }: ScreenshotImportModalProps) {
   const { toast } = useToast()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -110,7 +111,9 @@ export default function ScreenshotImportModal({
         setProgress(info.progress)
         setStatus(info.status)
       })
-      const parsed = parseHoldings(result)
+      const parsed = 'holdings' in result && Array.isArray(result.holdings) && result.holdings.length
+        ? result.holdings
+        : parseHoldings(result)
       const editable = toEditableRows(parsed)
       const enriched = await Promise.all(editable.map((row) => enrichRowFromSearch(row, importDeps.searchStocks)))
       setRows(enriched)
@@ -204,9 +207,9 @@ export default function ScreenshotImportModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl">
         <DialogHeader>
-          <DialogTitle>同花顺截图导入</DialogTitle>
+          <DialogTitle>截图导入持仓</DialogTitle>
           <DialogDescription>
-            上传或粘贴同花顺持仓截图，识别后可改数量/成本，再写入选定账户。无需登录同花顺。首次识别会下载中文模型。
+            上传或粘贴券商/同花顺持仓截图。优先按表格列读取「持仓数量」和「成本价」，不用现价或可卖数量。识别后仍可改，再写入选定账户。
           </DialogDescription>
         </DialogHeader>
 
