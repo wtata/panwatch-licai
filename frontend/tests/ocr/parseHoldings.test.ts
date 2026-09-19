@@ -80,6 +80,22 @@ V 维萨
     expect(rows[3]).toMatchObject({ quantity: 100, avgCost: 529.28, market: 'HK' })
   })
 
+  it('ignores account totals and duplicate qty/cost rows', () => {
+    const rows = parseHoldings({
+      text: `
+总资产 377034.01 -15991.87
+持仓 可用 市值
+122643.99 250363.12 241545.85
+浙江鼎业 -82.23 700 5.362
+浙江鼎业 -82.23 700 5.362
+数据港 -67.62 200 27.553
+数据 200 27.553
+`,
+    })
+    expect(rows.map((row) => row.name)).toEqual(['浙江鼎业', '数据港'])
+    expect(rows[0]).toMatchObject({ quantity: 700, avgCost: 5.362 })
+  })
+
   it('drops overlay leftovers and quantity-as-code rows', () => {
     const rows = parseHoldings({
       text: `

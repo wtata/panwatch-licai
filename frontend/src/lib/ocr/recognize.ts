@@ -132,14 +132,27 @@ export async function cropHoldingsCanvas(file: Blob): Promise<HTMLCanvasElement>
     return 0.299 * imageData.data[i] + 0.587 * imageData.data[i + 1] + 0.114 * imageData.data[i + 2]
   }
   const box = findDarkContentBox(src.width, src.height, grayAt)
-  if (!box) return src
+  if (!box) return trimHoldingsHeader(src)
   const cropped = document.createElement('canvas')
   cropped.width = box.w
   cropped.height = box.h
   const croppedCtx = cropped.getContext('2d')
   if (!croppedCtx) return src
   croppedCtx.drawImage(src, box.x, box.y, box.w, box.h, 0, 0, box.w, box.h)
-  return cropped
+  return trimHoldingsHeader(cropped)
+}
+
+export function trimHoldingsHeader(canvas: HTMLCanvasElement): HTMLCanvasElement {
+  if (canvas.height < 700) return canvas
+  const cut = Math.min(260, Math.round(canvas.height * 0.13))
+  if (canvas.height - cut < 480) return canvas
+  const next = document.createElement('canvas')
+  next.width = canvas.width
+  next.height = canvas.height - cut
+  const ctx = next.getContext('2d')
+  if (!ctx) return canvas
+  ctx.drawImage(canvas, 0, cut, canvas.width, canvas.height - cut, 0, 0, canvas.width, canvas.height - cut)
+  return next
 }
 
 export async function canvasToJpeg(canvas: HTMLCanvasElement, quality = 0.92): Promise<Blob> {

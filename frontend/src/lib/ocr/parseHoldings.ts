@@ -1,7 +1,7 @@
 import type { EditableHoldingRow, OcrWord, ParsedHolding } from './types'
 
 const HEADER_RE = /证券代码|证券名称|持仓数量|可卖数量|成本价|最新市值|浮动盈亏|当日参考|市值盈亏|成本\/现价/
-const SKIP_LINE_RE = /合计|可用资金|总资产|资产总值|持仓盈亏|当日盈亏|资金余额|持仓份额/
+const SKIP_LINE_RE = /合计|可用资金|总资产|总市值|资产总值|持仓盈亏|当日盈亏|资金余额|持仓份额|参考盈亏|持仓市值|可用市值/
 const CHROME_RE = /华宝证券|正在共享|持仓管理|配号买入|资产分析|Realty|Visa|Agilent|BHEM|^买入$|^卖出$|^查询$/
 const NAME_TOKEN_RE = /^(?:\*?ST)?[\u4e00-\u9fa5A-Za-z0-9.*]+$/
 const PERCENT_RE = /%|％/
@@ -272,7 +272,13 @@ function holdingFromColumns(
 }
 
 function isSummaryLine(text: string): boolean {
-  return SKIP_LINE_RE.test(text) || CHROME_RE.test(text) || /正在共享/.test(text)
+  if (SKIP_LINE_RE.test(text) || CHROME_RE.test(text) || /正在共享/.test(text)) return true
+  if (/持仓/.test(text) && /可用/.test(text)) return true
+  if (/^(持仓|可用|市值|盈亏|成本\/现价)$/.test(text.trim())) return true
+  if (/[\u4e00-\u9fa5]{2,}/.test(text) || /\d{6}/.test(text)) return false
+  const amounts = text.match(/\d[\d,]*(?:\.\d+)?/g) || []
+  const large = amounts.map((item) => Number(item.replace(/,/g, ''))).filter((value) => Number.isFinite(value) && value >= 1000)
+  return large.length >= 3
 }
 
 export function cleanStockName(text: string): string {
@@ -611,7 +617,32 @@ function uniqueHoldings(rows: ParsedHolding[]): ParsedHolding[] {
     const prev = byKey.get(key)
     if (!prev || completeness(row) > completeness(prev)) byKey.set(key, row)
   }
-  return Array.from(byKey.values())
+  return dedupeByQtyCost(Array.from(byKey.values()))
+}
+
+function qtyCostKey(row: ParsedHolding): string | null {
+  if (row.quantity == null || row.avgCost == null) return null
+  return `${row.quantity}:${row.avgCost.toFixed(2)}`
+}
+
+function dedupeByQtyCost(rows: ParsedHolding[]): ParsedHolding[] {
+  const best = new Map<string, ParsedHolding>()
+  const order: string[] = []
+  let extra = 0
+  for (const row of rows) {
+    const key = qtyCostKey(row) || `__${extra++}`
+    const prev = best.get(key)
+    if (!prev) {
+      order.push(key)
+      best.set(key, row)
+      continue
+    }
+    const longerName = cleanStockName(row.name).length > cleanStockName(prev.name).length
+    if (completeness(row) > completeness(prev) || (longerName && completeness(row) >= completeness(prev) - 0.2)) {
+      best.set(key, row)
+    }
+  }
+  return order.map((key) => best.get(key)!)
 }
 
 export function mergeParsedHoldings(primary: ParsedHolding[], secondary: ParsedHolding[]): ParsedHolding[] {
