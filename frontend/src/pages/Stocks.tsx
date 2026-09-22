@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectGroup, SelectLabel, SelectItem } from '@panwatch/base-ui/components/ui/select'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
+import KlineModal from '@panwatch/biz-ui/components/KlineModal'
 import { DeepAnalysisModal } from '@panwatch/biz-ui/components/deep-analysis-modal'
 import StockPriceAlertPanel from '@panwatch/biz-ui/components/stock-price-alert-panel'
 import ScreenshotImportModal from '@/components/holdings/ScreenshotImportModal'
@@ -378,6 +379,7 @@ export default function StocksPage() {
 
   // Kline Dialog
   const [klineDialogOpen, setKlineDialogOpen] = useState(false)
+  const [chartOpen, setChartOpen] = useState(false)
   const [klineDialogSymbol, setKlineDialogSymbol] = useState('')
   const [klineDialogMarket, setKlineDialogMarket] = useState('CN')
   const [klineDialogName, setKlineDialogName] = useState<string | undefined>(undefined)
@@ -754,7 +756,7 @@ export default function StocksPage() {
     setKlineDialogHasPosition(!!hasPosition)
     const m = market || 'CN'
     setKlineDialogInitialSummary(klineSummaries[`${m}:${symbol}`] || null)
-    setKlineDialogOpen(true)
+    setChartOpen(true)
   }, [klineSummaries])
 
   // Open news dialog - pass stock name for more stable search
@@ -2103,9 +2105,7 @@ export default function StocksPage() {
                                   </td>
                                   <td className="px-4 py-2.5 text-center">
                                     <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                      {(() => { const { suggestion, kline } = getSuggestionForStock(pos.symbol, pos.market, true); return (!suggestion && !kline) ? (
-                                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openKlineDialog(pos.symbol, pos.market, pos.name, true)} title="K线指标"><BarChart3 className="w-3 h-3" /></Button>
-                                      ) : null })()}
+                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openKlineDialog(pos.symbol, pos.market, pos.name, true)} title="当日分时"><BarChart3 className="w-3 h-3" /></Button>
                                       <StockPriceAlertPanel
                                         mode="icon"
                                         stockId={pos.stock_id}
@@ -2269,9 +2269,7 @@ export default function StocksPage() {
                                   )}
                                 </div>
                                 <div className="flex items-center gap-1">
-                                  {(() => { const { suggestion, kline } = getSuggestionForStock(pos.symbol, pos.market, true); return (!suggestion && !kline) ? (
-                                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openKlineDialog(pos.symbol, pos.market, pos.name, true)} title="K线指标"><BarChart3 className="w-3 h-3" /></Button>
-                                  ) : null })()}
+                                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openKlineDialog(pos.symbol, pos.market, pos.name, true)} title="当日分时"><BarChart3 className="w-3 h-3" /></Button>
                                   <StockPriceAlertPanel
                                     mode="icon"
                                     stockId={pos.stock_id}
@@ -2469,7 +2467,7 @@ export default function StocksPage() {
                           size="icon"
                           className="h-7 w-7"
                           onClick={() => openKlineDialog(stock.symbol, stock.market, stock.name, false)}
-                          title="K线指标"
+                          title="当日分时"
                         >
                           <BarChart3 className="w-3.5 h-3.5" />
                         </Button>
@@ -2529,7 +2527,17 @@ export default function StocksPage() {
         </div>
       )}
 
-      {/* Kline Dialog */}
+      <KlineModal
+        open={chartOpen}
+        onOpenChange={setChartOpen}
+        symbol={klineDialogSymbol}
+        market={klineDialogMarket}
+        title={klineDialogName ? `${klineDialogName} 当日分时` : (klineDialogSymbol ? `${klineDialogSymbol} 当日分时` : '当日分时')}
+        description="当日实时分时（价格、均价、成交量），可切换日K / 周K / 月K。"
+        initialInterval="trend"
+        onOpenSummary={() => setKlineDialogOpen(true)}
+      />
+
       <KlineSummaryDialog
         open={klineDialogOpen}
         onOpenChange={setKlineDialogOpen}
