@@ -26,6 +26,11 @@ from marketdata.vendors.kline import (
     TencentKlineVendor,
     YahooKlineVendor,
 )
+from marketdata.vendors.trends import (
+    EastmoneyTrendsVendor,
+    TencentTrendsVendor,
+    YahooTrendsVendor,
+)
 from marketdata.vendors.market_flow import (
     EastmoneyDividendVendor,
     EastmoneyDragonTigerVendor,
@@ -56,6 +61,11 @@ VENDOR_CLASSES_BY_TYPE: dict[str, dict[str, type]] = {
         "stooq": StooqKlineVendor,
         "eastmoney": EastmoneyKlineVendor,
         "yahoo": YahooKlineVendor,
+    },
+    "trends": {
+        "eastmoney": EastmoneyTrendsVendor,
+        "tencent": TencentTrendsVendor,
+        "yahoo": YahooTrendsVendor,
     },
     "capital_flow": {
         "eastmoney": EastmoneyCapitalFlowVendor,

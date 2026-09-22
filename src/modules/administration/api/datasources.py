@@ -17,6 +17,7 @@ router = APIRouter()
 TYPE_LABELS = {
     "news": "新闻资讯",
     "kline": "K线数据",
+    "trends": "当日分时",
     "capital_flow": "资金流向",
     "quote": "实时行情",
     "events": "事件日历",
@@ -74,6 +75,7 @@ _ENGINE_ATTACHED_TYPES = {
     "news",
     "quote",
     "kline",
+    "trends",
     "capital_flow",
     "events",
     "flash_news",

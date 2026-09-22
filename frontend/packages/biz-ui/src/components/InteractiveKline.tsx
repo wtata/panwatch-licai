@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { fetchAPI } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
+import TimeshareChart from '@panwatch/biz-ui/components/TimeshareChart'
+
+export type KlineInterval = 'trend' | '1d' | '1w' | '1m'
 
 type BusinessDay = { year: number; month: number; day: number }
 
@@ -155,12 +158,12 @@ function addHistogram(chart: any, LW: any, options: any) {
 export default function InteractiveKline(props: {
   symbol: string
   market: string
-  initialInterval?: '1d' | '1w' | '1m'
+  initialInterval?: KlineInterval
   initialDays?: '60' | '120' | '250'
 }) {
   const [lwReady, setLwReady] = useState(!!getLW())
   const [libError, setLibError] = useState(false)
-  const [interval, setIntervalValue] = useState<'1d' | '1w' | '1m'>(props.initialInterval || '1d')
+  const [interval, setIntervalValue] = useState<KlineInterval>(props.initialInterval || 'trend')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>('')
   const [data, setData] = useState<KlineItem[]>([])
@@ -181,7 +184,7 @@ export default function InteractiveKline(props: {
   const macdRef = useRef<HTMLDivElement | null>(null)
 
   const load = async () => {
-    if (!props.symbol) return
+    if (!props.symbol || interval === 'trend') return
     setLoading(true)
     setError('')
     setHoverTip(prev => (prev.visible ? { visible: false, x: 0, y: 0, row: null } : prev))
@@ -291,6 +294,7 @@ export default function InteractiveKline(props: {
 
   useEffect(() => {
     const LW = getLW()
+    if (interval === 'trend') return
     if (!LW || !lwReady) return
     if (!containerRef.current) return
     if (!series.candles.length) return
@@ -550,13 +554,21 @@ export default function InteractiveKline(props: {
   return (
     <div className="card p-4 md:p-5">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 mb-3">
-        <div className="text-[13px] font-semibold text-foreground">K线图</div>
+        <div>
+          <div className="text-[13px] font-semibold text-foreground">{interval === 'trend' ? '当日分时' : 'K线图'}</div>
+          {interval === 'trend' ? (
+            <div className="text-[11px] text-muted-foreground">实时分时 · 价格 / 均价 / 成交量 · 约 30 秒刷新</div>
+          ) : null}
+        </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Button variant={showRsi ? 'default' : 'secondary'} size="sm" className="h-8 px-2.5" onClick={() => setShowRsi(v => !v)}>
-            强弱线
-          </Button>
+          {interval !== 'trend' ? (
+            <Button variant={showRsi ? 'default' : 'secondary'} size="sm" className="h-8 px-2.5" onClick={() => setShowRsi(v => !v)}>
+              强弱线
+            </Button>
+          ) : null}
           <div className="inline-flex rounded-lg border border-border/60 bg-accent/20 p-0.5">
             {([
+              { value: 'trend', label: '分时' },
               { value: '1d', label: '日K' },
               { value: '1w', label: '周K' },
               { value: '1m', label: '月K' },
@@ -575,13 +587,19 @@ export default function InteractiveKline(props: {
               </button>
             ))}
           </div>
-          <Button variant="secondary" size="sm" className="h-8" onClick={() => void load()} disabled={loading}>
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">刷新</span>
-          </Button>
+          {interval !== 'trend' ? (
+            <Button variant="secondary" size="sm" className="h-8" onClick={() => void load()} disabled={loading}>
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">刷新</span>
+            </Button>
+          ) : null}
         </div>
       </div>
 
+      {interval === 'trend' ? (
+        <TimeshareChart symbol={props.symbol} market={props.market} refreshMs={30000} embedded />
+      ) : (
+      <>
       {error ? (
         <div className="text-[12px] text-rose-600 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2 mb-3">
           {error}
@@ -656,6 +674,8 @@ export default function InteractiveKline(props: {
           )}
         </div>
       </div>
+      </>
+      )}
     </div>
   )
 }

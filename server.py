@@ -433,6 +433,41 @@ DATA_SOURCE_SEEDS: list[dict] = [
             "supports_batch": False,
             "test_symbols": ["AAPL", "00700"],
         },
+        # 当日分时(价格/均价/成交量)。Yahoo 默认关:国内通常要代理,打开后美股含盘前盘后。
+        {
+            "name": "东方财富分时",
+            "type": "trends",
+            "provider": "eastmoney",
+            "config": {"description": "东方财富当日分时(CN/HK/US)。时间为市场本地钟面。"},
+            "enabled": True,
+            "priority": 0,
+            "supports_batch": False,
+            "test_symbols": ["300409", "600519", "00700"],
+        },
+        {
+            "name": "腾讯分时",
+            "type": "trends",
+            "provider": "tencent",
+            "config": {"description": "腾讯当日分时,作 A 股/港股东财之后的第二源。"},
+            "enabled": True,
+            "priority": 5,
+            "supports_batch": False,
+            "test_symbols": ["300409", "600519", "00700"],
+        },
+        {
+            "name": "Yahoo分时",
+            "type": "trends",
+            "provider": "yahoo",
+            "config": {
+                "description": "Yahoo 1 分钟分时(US/HK),includePrePost 含美股盘前盘后。"
+                "国内访问通常需代理,在 config.proxy 填写后启用。",
+                "proxy": "",
+            },
+            "enabled": False,
+            "priority": 20,
+            "supports_batch": False,
+            "test_symbols": ["AAPL", "00700"],
+        },
         # 资金流向数据源
         {
             "name": "东方财富资金流",
