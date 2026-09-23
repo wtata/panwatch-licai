@@ -2,9 +2,14 @@
  * Lightweight Charts 把 Unix 秒按 UTC 画刻度。
  * A 股 09:30（北京）的绝对时间在 UTC 是 01:30，默认刻度会显示成 01:30 / 被裁成 :30。
  * 分时轴必须用市场时区格式化 tick 与十字线。
+ * 美股默认美东（含夏令时），分时弹窗可改成北京时间，偏好记在 localStorage。
  */
 
 export type ChartTime = number | string | { year: number; month: number; day: number }
+
+export type IntradayClockZone = 'America/New_York' | 'Asia/Shanghai'
+
+export const US_INTRADAY_CLOCK_KEY = 'panwatch.usIntradayClock'
 
 export function chartTimeZone(market: string): string {
   const m = String(market || '').toUpperCase()
@@ -17,6 +22,36 @@ export function chartTimeZoneLabel(market: string): string {
   if (m === 'US') return '美东时间'
   if (m === 'HK') return '香港时间'
   return '北京时间'
+}
+
+export function intradayClockLabel(market: string, zone: string): string {
+  if (String(market || '').toUpperCase() === 'US') {
+    return zone === 'Asia/Shanghai' ? '北京时间' : '美东时间'
+  }
+  return chartTimeZoneLabel(market)
+}
+
+export function readUsIntradayClock(): IntradayClockZone {
+  try {
+    if (localStorage.getItem(US_INTRADAY_CLOCK_KEY) === 'Asia/Shanghai') return 'Asia/Shanghai'
+  } catch {
+    // 隐私模式或非浏览器环境
+  }
+  return 'America/New_York'
+}
+
+export function writeUsIntradayClock(zone: IntradayClockZone) {
+  try {
+    localStorage.setItem(US_INTRADAY_CLOCK_KEY, zone)
+  } catch {
+    // 写失败时仍使用当前选择，只是刷新后回到默认美东
+  }
+}
+
+/** 美股读本机偏好；A 股/港股固定市场时区，不跟美股开关走。 */
+export function initialIntradayClock(market: string): string {
+  if (String(market || '').toUpperCase() === 'US') return readUsIntradayClock()
+  return chartTimeZone(market)
 }
 
 function pad2(value: string | undefined): string {

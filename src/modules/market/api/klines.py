@@ -147,7 +147,7 @@ _TRENDS_TZ = {"CN": "Asia/Shanghai", "HK": "Asia/Shanghai", "US": "America/New_Y
 
 @router.get("/{symbol}/trends")
 def get_trends(symbol: str, market: str = "CN"):
-    """当日实时分时:价格、均价、成交量。时间戳为 Unix 秒,钟面时区见 timezone。"""
+    """当日实时分时:价格、均价、成交量。ts 为 Unix 秒。time 与 timezone 为市场本地钟面(美股为美东,含夏令时)。"""
     market_code = _parse_market(market)
     from src.platform.marketdata.collectors.kline_collector import get_market_data
 
