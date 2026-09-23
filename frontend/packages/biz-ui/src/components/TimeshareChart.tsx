@@ -3,10 +3,14 @@ import { RefreshCw } from 'lucide-react'
 import { fetchAPI } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import {
+  type IntradayClockZone,
   chartTimeZone,
-  chartTimeZoneLabel,
   formatChartClock,
+  initialIntradayClock,
+  intradayClockLabel,
   intradayTimeScaleOptions,
+  readUsIntradayClock,
+  writeUsIntradayClock,
 } from '@panwatch/biz-ui/components/chart-time'
 
 type TrendPoint = {
@@ -62,7 +66,7 @@ export default function TimeshareChart(props: {
   const [error, setError] = useState('')
   const [points, setPoints] = useState<TrendPoint[]>([])
   const [prevClose, setPrevClose] = useState<number | null>(null)
-  const [timezone, setTimezone] = useState(() => chartTimeZone(props.market))
+  const [clockZone, setClockZone] = useState(() => initialIntradayClock(props.market))
   const [hover, setHover] = useState<{ x: number; y: number; point: TrendPoint } | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const requestRef = useRef(0)
@@ -94,7 +98,10 @@ export default function TimeshareChart(props: {
       }
       setPoints([...byTs.values()].sort((a, b) => a.ts - b.ts))
       setPrevClose(res.prev_close == null || Number.isNaN(Number(res.prev_close)) ? null : Number(res.prev_close))
-      setTimezone(res.timezone || chartTimeZone(props.market))
+      // 美股时区由用户切换决定，刷新不能把它打回接口里的美东。
+      if (String(props.market || '').toUpperCase() !== 'US') {
+        setClockZone(res.timezone || chartTimeZone(props.market))
+      }
     } catch (e) {
       if (reqId !== requestRef.current) return
       setError(e instanceof Error ? e.message : '加载当日分时失败')
@@ -103,6 +110,11 @@ export default function TimeshareChart(props: {
       if (reqId === requestRef.current) setLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (String(props.market || '').toUpperCase() === 'US') setClockZone(readUsIntradayClock())
+    else setClockZone(chartTimeZone(props.market))
+  }, [props.market])
 
   useEffect(() => {
     void load()
@@ -156,7 +168,7 @@ export default function TimeshareChart(props: {
     const rootStyle = getComputedStyle(document.documentElement)
     const bg = rootStyle.getPropertyValue('--card').trim()
     const fg = rootStyle.getPropertyValue('--foreground').trim()
-    const scale = intradayTimeScaleOptions(timezone)
+    const scale = intradayTimeScaleOptions(clockZone)
     const up = prevClose == null || (latest?.price ?? 0) >= prevClose
     const priceColor = up ? '#ef4444' : '#10b981'
 
@@ -252,10 +264,16 @@ export default function TimeshareChart(props: {
         // ignore
       }
     }
-  }, [points, lwReady, timezone, prevClose, latest])
+  }, [points, lwReady, clockZone, prevClose, latest])
 
-  const zoneLabel = chartTimeZoneLabel(props.market)
+  const isUs = String(props.market || '').toUpperCase() === 'US'
+  const zoneLabel = intradayClockLabel(props.market, clockZone)
   const up = changePct == null || changePct >= 0
+
+  const selectUsClock = (zone: IntradayClockZone) => {
+    setClockZone(zone)
+    writeUsIntradayClock(zone)
+  }
 
   return (
     <div className={props.embedded ? '' : 'card p-4 md:p-5'}>
@@ -269,7 +287,38 @@ export default function TimeshareChart(props: {
             <span className="inline-block w-3 h-0.5 bg-amber-500" />
             均价
           </span>
-          <span>{zoneLabel}</span>
+          {isUs ? (
+            <span className="inline-flex items-center gap-1.5">
+              <span>{zoneLabel}</span>
+              <span
+                className="inline-flex rounded-md border border-border/60 bg-accent/20 p-0.5"
+                role="group"
+                aria-label="分时时区"
+                title={clockZone === 'Asia/Shanghai' ? '当前按北京时间。美股交易日会跨过零点' : '当前按美东时间，大约 09:30–16:00'}
+              >
+                {([
+                  ['America/New_York', '美东'],
+                  ['Asia/Shanghai', '北京'],
+                ] as const).map(([zone, label]) => (
+                  <button
+                    key={zone}
+                    type="button"
+                    aria-pressed={clockZone === zone}
+                    className={`h-6 min-w-[40px] rounded px-2 text-[11px] transition-colors ${
+                      clockZone === zone
+                        ? 'bg-primary text-primary-foreground'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-accent/60'
+                    }`}
+                    onClick={() => selectUsClock(zone)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </span>
+            </span>
+          ) : (
+            <span>{zoneLabel}</span>
+          )}
           {latest ? (
             <span className={`font-mono ${up ? 'text-rose-500' : 'text-emerald-500'}`}>
               {latest.price.toFixed(2)}
@@ -309,7 +358,7 @@ export default function TimeshareChart(props: {
             className="pointer-events-none absolute z-10 w-[180px] rounded-lg border border-border/60 bg-card/95 px-3 py-2 shadow-lg"
             style={{ left: `${hover.x}px`, top: `${hover.y}px` }}
           >
-            <div className="text-[11px] font-medium mb-1">{formatChartClock(hover.point.ts, timezone)} {zoneLabel}</div>
+            <div className="text-[11px] font-medium mb-1">{formatChartClock(hover.point.ts, clockZone)} {zoneLabel}</div>
             <div className="text-[11px] text-muted-foreground space-y-0.5">
               <div>价格 <span className="font-mono text-foreground">{hover.point.price.toFixed(2)}</span></div>
               <div>均价 <span className="font-mono text-foreground">{hover.point.avg.toFixed(2)}</span></div>

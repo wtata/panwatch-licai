@@ -62,6 +62,58 @@ def test_tencent_minute_uses_market_local_clock():
     assert bars[0].avg == 10.10
 
 
+def test_eastmoney_us_beijing_clock_becomes_eastern_unix():
+    """东财美股原文是北京时间。夏令时 21:30=美东 09:30,跨过北京零点仍是同一交易日。"""
+    payload = {
+        "data": {
+            "preClose": 257.38,
+            "trends": [
+                # 上一美东交易日收盘,应被最新交易日过滤掉。
+                "2026-09-22 04:00,250.00,250.00,250.00,250.00,1,1,250",
+                # 夏令时开盘:北京 21:30 = 美东 09:30。
+                "2026-09-22 21:30,255.25,255.47,255.89,255.09,100,1000,256.03",
+                # 北京零点 = 美东 12:00,不能当成新的一天从 00:00 起算。
+                "2026-09-23 00:15,262.25,262.30,262.40,262.10,80,800,262.20",
+                "2026-09-23 04:00,262.36,262.36,262.60,262.17,90,900,262.46",
+            ],
+        }
+    }
+    bars = parse_eastmoney_trends(payload, market="US")
+    assert [p.time for p in bars] == [
+        "2026-09-22 09:30",
+        "2026-09-22 12:15",
+        "2026-09-22 16:00",
+    ]
+    assert bars.timezone == "America/New_York"
+    open_ts = int(datetime(2026, 9, 22, 9, 30, tzinfo=ZoneInfo("America/New_York")).timestamp())
+    noon_ts = int(datetime(2026, 9, 22, 12, 15, tzinfo=ZoneInfo("America/New_York")).timestamp())
+    assert bars[0].ts == open_ts
+    assert bars[1].ts == noon_ts
+    assert datetime.fromtimestamp(bars[0].ts, tz=ZoneInfo("America/New_York")).strftime("%H:%M") == "09:30"
+    assert datetime.fromtimestamp(bars[0].ts, tz=ZoneInfo("Asia/Shanghai")).strftime("%H:%M") == "21:30"
+    assert datetime.fromtimestamp(bars[1].ts, tz=ZoneInfo("Asia/Shanghai")).strftime("%H:%M") == "00:15"
+    assert bars[0].price == 255.25
+    assert bars.prev_close == 257.38
+
+
+def test_eastmoney_us_standard_time_is_13_hours():
+    """冬令时美东比北京慢 13 小时,不能固定减 12 小时。"""
+    payload = {
+        "data": {
+            "preClose": 100,
+            "trends": [
+                "2026-01-15 22:30,100,100,100,100,1,1,100",
+                "2026-01-16 05:00,101,101,101,101,1,1,101",
+            ],
+        }
+    }
+    bars = parse_eastmoney_trends(payload, market="US")
+    assert [p.time for p in bars] == ["2026-01-15 09:30", "2026-01-15 16:00"]
+    assert bars[0].ts == int(datetime(2026, 1, 15, 9, 30, tzinfo=ZoneInfo("America/New_York")).timestamp())
+    assert datetime.fromtimestamp(bars[0].ts, tz=ZoneInfo("Asia/Shanghai")).strftime("%H:%M") == "22:30"
+    assert datetime.fromtimestamp(bars[-1].ts, tz=ZoneInfo("America/New_York")).strftime("%H:%M") == "16:00"
+
+
 def test_yahoo_us_premarket_stays_on_eastern_session_date():
     pre_ts = int(datetime(2026, 9, 22, 8, 0, tzinfo=ZoneInfo("America/New_York")).timestamp())
     open_ts = int(datetime(2026, 9, 22, 9, 30, tzinfo=ZoneInfo("America/New_York")).timestamp())

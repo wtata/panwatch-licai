@@ -2,6 +2,9 @@
 
 time 一律写成市场本地钟面,ts 为真实 Unix 秒。图表用 ts + 时区格式化,
 不能把 Unix 秒当 UTC 钟面直接画(否则 A 股 09:30 会显示成 01:30)。
+
+东财美股 trends2 的时间字符串是北京时间,不是美东。先按上海时区得到绝对时间,
+再写成美东钟面(含夏令时)。否则 09:30 会画成 21:30,过了北京零点还会被裁成从 00:00 起算。
 """
 from __future__ import annotations
 
@@ -59,7 +62,11 @@ def _f(value) -> float | None:
 
 
 def _keep_latest_session(points: list[TrendPoint]) -> list[TrendPoint]:
-    """只留最新交易日,避免 Yahoo 1d 把上一交易日尾盘混进当日分时。"""
+    """只留最新交易日,避免 Yahoo 1d 把上一交易日尾盘混进当日分时。
+
+    time 必须已经是市场本地钟面。美股用美东日期:东财原文跨过北京零点,
+    若按北京日期截断,会把 09:30 到中午的上午段丢掉。
+    """
     if not points:
         return []
     latest = max(p.time[:10] for p in points if p.time)
@@ -82,8 +89,24 @@ def _local_ts(text: str, tz_name: str) -> tuple[str, int] | None:
     return None
 
 
+def _eastmoney_wall_clock(text: str, market: str) -> tuple[str, int] | None:
+    """东财分时原文按北京时间理解,输出该市场的本地钟面和 Unix 秒。
+
+    美股夏令时:北京 21:30 = 美东 09:30,北京次日 04:00 = 美东 16:00。
+    美股标准时差 13 小时:北京 22:30 = 美东 09:30,北京次日 05:00 = 美东 16:00。
+    CN/HK 原文本身就是上海钟面,往返后不变。
+    """
+    parsed = _local_ts(text, "Asia/Shanghai")
+    if parsed is None:
+        return None
+    _, ts = parsed
+    display_tz = market_timezone(market)
+    wall = datetime.fromtimestamp(ts, tz=ZoneInfo(display_tz)).strftime("%Y-%m-%d %H:%M")
+    return wall, ts
+
+
 def parse_eastmoney_trends(payload: dict | None, *, market: str) -> TrendBars:
-    """东财 trends2:「时间,价格,均价,成交量,...」。时间为该市场本地钟面。"""
+    """东财 trends2:「时间,价格,均价,成交量,...」。美股原文是北京时间。"""
     tz_name = market_timezone(market)
     bars = TrendBars(timezone=tz_name, vendor="eastmoney")
     data = (payload or {}).get("data") if isinstance(payload, dict) else None
@@ -98,7 +121,7 @@ def parse_eastmoney_trends(payload: dict | None, *, market: str) -> TrendBars:
         parts = str(row).split(",")
         if len(parts) < 3:
             continue
-        parsed = _local_ts(parts[0], tz_name)
+        parsed = _eastmoney_wall_clock(parts[0], market)
         price = _f(parts[1])
         if parsed is None or price is None:
             continue
