@@ -5,12 +5,14 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Literal
 
 from datetime import datetime, timedelta, timezone
 
 from src.platform.persistence.database import get_db
-from src.platform.persistence.models import Account, PriceAlertRule, Position, Stock
+from src.platform.persistence.models import Account, PortfolioTrade, PriceAlertRule, Position, Stock
+from src.modules.portfolio.position_ledger import TradeError, TradeRequest, execute_trade
 from src.platform.marketdata.marketdata_client import md_quote_rows
 from src.platform.marketdata.collectors.market_http import TTLCache
 from src.platform.marketdata.models import MarketCode
@@ -161,6 +163,81 @@ class PositionReorderItem(BaseModel):
 
 class PositionReorderRequest(BaseModel):
     items: list[PositionReorderItem]
+
+
+class TradeCreate(BaseModel):
+    side: Literal["buy", "sell"]
+    account_id: int | None = None
+    stock_id: int | None = None
+    position_id: int | None = None
+    quantity: int = Field(gt=0)
+    price: float = Field(gt=0)
+    fee: float = Field(default=0, ge=0)
+    note: str = ""
+
+
+def _trade_dict(trade: PortfolioTrade) -> dict:
+    traded_at = trade.traded_at
+    if isinstance(traded_at, datetime):
+        traded_at = traded_at.isoformat(sep=" ", timespec="seconds")
+    return {
+        "id": trade.id,
+        "account_id": trade.account_id,
+        "stock_id": trade.stock_id,
+        "account_name": trade.account_name,
+        "stock_symbol": trade.stock_symbol,
+        "stock_name": trade.stock_name,
+        "stock_market": trade.stock_market,
+        "side": trade.side,
+        "quantity": trade.quantity,
+        "price": trade.price,
+        "fee": trade.fee,
+        "amount": trade.amount,
+        "cash_delta": trade.cash_delta,
+        "fx_rate": trade.fx_rate,
+        "position_quantity_before": trade.position_quantity_before,
+        "position_quantity_after": trade.position_quantity_after,
+        "cost_price_before": trade.cost_price_before,
+        "cost_price_after": trade.cost_price_after,
+        "invested_amount_before": trade.invested_amount_before,
+        "invested_amount_after": trade.invested_amount_after,
+        "available_funds_before": trade.available_funds_before,
+        "available_funds_after": trade.available_funds_after,
+        "note": trade.note or "",
+        "traded_at": traded_at,
+    }
+
+
+def _trade_result_payload(result: dict) -> dict:
+    trade = result["trade"]
+    account = result["account"]
+    position = result["position"]
+    stock = result["stock"]
+    position_payload = None
+    if position is not None:
+        position_payload = {
+            "id": position.id,
+            "account_id": position.account_id,
+            "stock_id": position.stock_id,
+            "cost_price": position.cost_price,
+            "quantity": position.quantity,
+            "invested_amount": position.invested_amount,
+            "sort_order": position.sort_order or 0,
+            "trading_style": position.trading_style,
+            "account_name": account.name,
+            "stock_symbol": stock.symbol,
+            "stock_name": stock.name,
+        }
+    return {
+        "trade": _trade_dict(trade),
+        "closed": bool(result["closed"]),
+        "account": {
+            "id": account.id,
+            "name": account.name,
+            "available_funds": account.available_funds,
+        },
+        "position": position_payload,
+    }
 
 
 # ========== Account Endpoints ==========
@@ -351,12 +428,60 @@ def update_position(position_id: int, data: PositionUpdate, db: Session = Depend
     }
 
 
+def _settle_position_at_market(position: Position, db: Session) -> dict:
+    """按现价整笔卖出后删除。没有行情时不改持仓、不改现金。"""
+    stock = position.stock
+    if stock is None:
+        raise HTTPException(400, "持仓缺少标的，无法按现价回笼")
+    quantity = int(position.quantity or 0)
+    if quantity <= 0:
+        raise HTTPException(400, "持仓数量为 0，无法按现价回笼")
+    quotes = _fetch_quotes_for_stocks([stock])
+    quote = quotes.get(stock.symbol) or {}
+    try:
+        price = float(quote.get("current_price") or 0)
+    except (TypeError, ValueError):
+        price = 0
+    if price <= 0:
+        raise HTTPException(400, "无法获取现价，持仓未删除，可用资金未变动")
+    try:
+        result = execute_trade(
+            db,
+            TradeRequest(
+                side="sell",
+                account_id=position.account_id,
+                stock_id=position.stock_id,
+                position_id=position.id,
+                quantity=quantity,
+                price=price,
+                fee=0,
+                note="删除持仓并按现价回笼",
+            ),
+        )
+    except TradeError as exc:
+        db.rollback()
+        raise HTTPException(exc.status_code, exc.message) from exc
+    return {
+        "success": True,
+        "settled": True,
+        "cash_delta": result["trade"].cash_delta,
+        "trade_id": result["trade"].id,
+    }
+
+
 @router.delete("/positions/{position_id}")
-def delete_position(position_id: int, db: Session = Depends(get_db)):
-    """删除持仓"""
+def delete_position(
+    position_id: int,
+    db: Session = Depends(get_db),
+    settle_at_market: bool = False,
+):
+    """删除持仓。默认只清记录，不回笼现金；settle_at_market 才会按现价卖出。"""
     position = db.query(Position).filter(Position.id == position_id).first()
     if not position:
         raise HTTPException(404, "持仓不存在")
+
+    if settle_at_market:
+        return _settle_position_at_market(position, db)
 
     # Capture lazy relationships before the row is deleted/committed.  The
     # deleted Position is no longer session-bound afterwards; logging its
@@ -386,6 +511,59 @@ def reorder_positions(data: PositionReorderRequest, db: Session = Depends(get_db
         updated += 1
     db.commit()
     return {"updated": updated}
+
+
+# ========== Live trade ledger ==========
+
+@router.get("/portfolio/trades")
+def list_portfolio_trades(
+    account_id: int | None = None,
+    stock_id: int | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+):
+    """实盘买卖流水，新的在前。"""
+    limit = max(1, min(int(limit or 100), 500))
+    offset = max(0, int(offset or 0))
+    query = db.query(PortfolioTrade)
+    if account_id:
+        query = query.filter(PortfolioTrade.account_id == account_id)
+    if stock_id:
+        query = query.filter(PortfolioTrade.stock_id == stock_id)
+    rows = query.order_by(PortfolioTrade.id.desc()).offset(offset).limit(limit).all()
+    return [_trade_dict(row) for row in rows]
+
+
+@router.post("/portfolio/trades")
+def create_portfolio_trade(data: TradeCreate, db: Session = Depends(get_db)):
+    """买入或卖出。买入扣可用资金并加仓；卖出回笼现金并减仓，卖光则删除持仓。"""
+    try:
+        result = execute_trade(
+            db,
+            TradeRequest(
+                side=data.side,
+                account_id=data.account_id,
+                stock_id=data.stock_id,
+                position_id=data.position_id,
+                quantity=data.quantity,
+                price=data.price,
+                fee=data.fee,
+                note=data.note,
+            ),
+        )
+    except TradeError as exc:
+        db.rollback()
+        raise HTTPException(exc.status_code, exc.message) from exc
+    logger.info(
+        "实盘%s: %s %s x%s @ %s",
+        "买入" if data.side == "buy" else "卖出",
+        result["account"].name,
+        result["stock"].symbol,
+        data.quantity,
+        data.price,
+    )
+    return _trade_result_payload(result)
 
 
 # ========== Portfolio Summary ==========
