@@ -153,8 +153,40 @@ def _tencent_prev_close(block: dict, tsym: str) -> float | None:
     return None
 
 
+def _fourth_is_avg(price: float, fourth: float) -> bool:
+    """第四列贴近现价时,它就是均价;否则是成交额。"""
+    return price > 0 and abs(fourth - price) / price < 0.5
+
+
+def _turnover_share_scale(price: float, volume: float, amount: float) -> float:
+    """把腾讯成交量换成股数的乘数。
+
+    成交额是元。主板/创业板成交量是手(1手=100股),直接 amount/volume 会把均价放大约 100 倍。
+    科创板和港股成交量已经是股,amount/volume 就在现价附近。用第一笔的量纲锁定,避免误伤。
+    """
+    if price <= 0 or volume <= 0 or amount <= 0:
+        return 1.0
+    per_unit = amount / volume
+    if abs(per_unit - price) / price < 0.5:
+        return 1.0
+    per_lot = per_unit / 100.0
+    if abs(per_lot - price) / price < 0.5:
+        return 100.0
+    return 100.0 if abs(per_lot - price) < abs(per_unit - price) else 1.0
+
+
+def _volume_series_is_cumulative(volumes: list[float]) -> bool:
+    """腾讯 minute/query 的成交量和成交额是从开盘起的累计值,不是这一分钟的增量。"""
+    if len(volumes) < 2:
+        return True
+    return all(cur >= prev for prev, cur in zip(volumes, volumes[1:]))
+
+
 def parse_tencent_trends(payload: dict | None, *, tsym: str, market: str) -> TrendBars:
-    """腾讯 minute/query。每条「HHMM 价格 成交量 均价或成交额」。"""
+    """腾讯 minute/query。每条「HHMM 价格 成交量 均价或成交额」。
+
+    成交额路径的均价 = 累计成交额 / 累计股数。A 股主板股数 = 成交量(手) × 100。
+    """
     tz_name = market_timezone(market)
     bars = TrendBars(timezone=tz_name, vendor="tencent")
     data = (payload or {}).get("data") if isinstance(payload, dict) else None
@@ -170,9 +202,8 @@ def parse_tencent_trends(payload: dict | None, *, tsym: str, market: str) -> Tre
     else:
         return bars
     bars.prev_close = _tencent_prev_close(block, tsym)
-    points: list[TrendPoint] = []
-    cum_pv = 0.0
-    cum_v = 0.0
+
+    parsed_rows: list[tuple[str, int, float, float, float | None]] = []
     for row in inner.get("data") or []:
         parts = str(row).split()
         if len(parts) < 3:
@@ -190,16 +221,41 @@ def parse_tencent_trends(payload: dict | None, *, tsym: str, market: str) -> Tre
         if parsed is None or price is None or third is None:
             continue
         fourth = _f(parts[3]) if len(parts) > 3 else None
+        time_text, ts = parsed
+        parsed_rows.append((time_text, ts, price, third, fourth))
+
+    turnover_vols = [
+        vol for _, _, price, vol, fourth in parsed_rows
+        if fourth is not None and fourth > 0 and vol > 0 and not _fourth_is_avg(price, fourth)
+    ]
+    cumulative = _volume_series_is_cumulative(turnover_vols) if turnover_vols else False
+    scale = 1.0
+    scale_locked = False
+    cum_amt = 0.0
+    cum_shares = 0.0
+    prev_vol = 0.0
+    points: list[TrendPoint] = []
+    for time_text, ts, price, third, fourth in parsed_rows:
         volume = third
         avg = price
-        if fourth is not None and price > 0 and abs(fourth - price) / price < 0.5:
+        if fourth is not None and _fourth_is_avg(price, fourth):
             avg = fourth
         elif fourth is not None and fourth > 0 and third > 0:
-            # 第四列是成交额时用累计 VWAP 作为均价。
-            cum_pv += fourth
-            cum_v += third
-            avg = cum_pv / cum_v if cum_v else price
-        time_text, ts = parsed
+            if not scale_locked:
+                scale = _turnover_share_scale(price, third, fourth)
+                scale_locked = True
+            if cumulative:
+                # 列里已经是当日累计,再把累计值加总会把均价算偏。
+                shares = third * scale
+                avg = fourth / shares if shares else price
+                delta = third - prev_vol
+                volume = delta if delta > 0 else 0.0
+                prev_vol = third
+            else:
+                shares = third * scale
+                cum_amt += fourth
+                cum_shares += shares
+                avg = cum_amt / cum_shares if cum_shares else price
         points.append(TrendPoint(time=time_text, ts=ts, price=price, avg=avg, volume=volume))
     bars.extend(_keep_latest_session(points))
     return bars

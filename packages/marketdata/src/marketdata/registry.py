@@ -22,6 +22,7 @@ from marketdata.vendors.flash_news import (
 )
 from marketdata.vendors.kline import (
     EastmoneyKlineVendor,
+    SinaKlineVendor,
     StooqKlineVendor,
     TencentKlineVendor,
     YahooKlineVendor,
@@ -60,6 +61,7 @@ VENDOR_CLASSES_BY_TYPE: dict[str, dict[str, type]] = {
         "tencent": TencentKlineVendor,
         "stooq": StooqKlineVendor,
         "eastmoney": EastmoneyKlineVendor,
+        "sina": SinaKlineVendor,
         "yahoo": YahooKlineVendor,
     },
     "trends": {
