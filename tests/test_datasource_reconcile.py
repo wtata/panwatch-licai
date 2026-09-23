@@ -86,6 +86,11 @@ def test_reconcile_deletes_orphans_keeps_user_custom_and_fills_missing_defaults(
 
     # 缺失的默认被补回
     assert ("kline", "eastmoney") in remaining
+    # 美股分时兜底:默认开启,且排在东财前面;不改 Yahoo 的关闭状态
+    sina_trends = remaining[("trends", "sina")]
+    assert sina_trends.enabled is True
+    assert sina_trends.priority < remaining[("trends", "eastmoney")].priority
+    assert remaining[("trends", "yahoo")].enabled is False
 
     # summary 里能看到删除记录
     deleted_pairs = {(d["type"], d["provider"]) for d in result["deleted"]}

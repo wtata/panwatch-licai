@@ -8,9 +8,15 @@ from marketdata.client import MarketData
 from marketdata.ports import SourceConfig
 from marketdata.vendors.trends import (
     EastmoneyTrendsVendor,
+    SinaTrendsVendor,
+    TencentTrendsVendor,
+    infer_us_regular_session_date,
     parse_eastmoney_trends,
+    parse_sina_us_minline,
+    parse_sina_us_quote_meta,
     parse_tencent_trends,
     parse_yahoo_trends,
+    resolve_us_minline_session_date,
 )
 
 
@@ -199,6 +205,179 @@ def test_yahoo_us_premarket_stays_on_eastern_session_date():
     assert bars.prev_close == 99.0
     assert bars[0].price == 100.5
     assert bars[0].ts == pre_ts
+
+
+def test_sina_us_minline_uses_vendor_avg_and_eastern_clock():
+    payload = "09:30:00,402350,255.659,257.3250;09:31:00,126555,256.302,259.2600;16:00:00,2568405,262.463,262.3750"
+    bars = parse_sina_us_minline(payload, session_date="2026-09-22", prev_close=257.38)
+    assert [p.time for p in bars] == [
+        "2026-09-22 09:30",
+        "2026-09-22 09:31",
+        "2026-09-22 16:00",
+    ]
+    assert bars.timezone == "America/New_York"
+    assert bars.vendor == "sina"
+    assert bars.prev_close == 257.38
+    assert bars[0].volume == 402350
+    assert bars[0].avg == 255.659
+    assert bars[0].price == 257.325
+    assert bars[-1].price == 262.375
+    # 均价是源给的,不能被成交量放大成另一根价格。
+    assert abs(bars[0].avg - bars[0].price) / bars[0].price < 0.02
+    open_ts = int(datetime(2026, 9, 22, 9, 30, tzinfo=ZoneInfo("America/New_York")).timestamp())
+    assert bars[0].ts == open_ts
+
+
+def test_sina_us_minline_rejects_error_payload():
+    assert parse_sina_us_minline({"__ERROR": "42S02"}, session_date="2026-09-22") == []
+    assert parse_sina_us_minline("", session_date="2026-09-22") == []
+    assert parse_sina_us_minline(None, session_date="2026-09-22") == []
+
+
+def test_sina_us_quote_meta_reads_prev_close_and_session_stamp():
+    text = (
+        'var hq_str_gb_mrvl="迈威尔科技,262.36,1.93,2026-09-23 19:34:33,'
+        + ",".join(["0"] * 20)
+        + ',Sep 23 07:34AM EDT,Sep 22 04:00PM EDT,257.3800";'
+    )
+    now = datetime(2026, 9, 23, 7, 34, tzinfo=ZoneInfo("America/New_York"))
+    prev, stamp = parse_sina_us_quote_meta(text, now)
+    assert prev == 257.38
+    assert stamp is not None
+    assert stamp.date().isoformat() == "2026-09-22"
+
+
+def test_us_minline_date_uses_close_stamp_when_curve_is_finished():
+    now = datetime(2026, 9, 24, 11, 0, tzinfo=ZoneInfo("America/New_York"))
+    stamp = datetime(2026, 9, 23, 16, 0, tzinfo=ZoneInfo("America/New_York"))
+    # 假日白天:曲线已在 16:00 收完,不能标成今天。
+    assert resolve_us_minline_session_date(now, "16:00", stamp) == "2026-09-23"
+
+
+def test_us_minline_early_close_stays_on_previous_session_next_morning():
+    now = datetime(2026, 9, 24, 10, 0, tzinfo=ZoneInfo("America/New_York"))
+    stamp = datetime(2026, 9, 23, 13, 0, tzinfo=ZoneInfo("America/New_York"))
+    # 上一场 13:00 就收完,次日 10:00 这根比钟面还晚,不能标成今天。
+    assert resolve_us_minline_session_date(now, "13:00", stamp) == "2026-09-23"
+
+
+def test_us_minline_date_uses_today_while_session_is_printing():
+    now = datetime(2026, 9, 23, 10, 15, tzinfo=ZoneInfo("America/New_York"))
+    stamp = datetime(2026, 9, 22, 16, 0, tzinfo=ZoneInfo("America/New_York"))
+    assert resolve_us_minline_session_date(now, "10:14", stamp) == "2026-09-23"
+
+
+def test_infer_us_session_date_rolls_weekends_and_premarket():
+    premarket = datetime(2026, 9, 23, 7, 34, tzinfo=ZoneInfo("America/New_York"))
+    assert infer_us_regular_session_date(premarket) == "2026-09-22"
+    saturday = datetime(2026, 9, 26, 11, 0, tzinfo=ZoneInfo("America/New_York"))
+    assert infer_us_regular_session_date(saturday) == "2026-09-25"
+    after_close = datetime(2026, 9, 25, 18, 0, tzinfo=ZoneInfo("America/New_York"))
+    assert infer_us_regular_session_date(after_close) == "2026-09-25"
+    monday_morning = datetime(2026, 9, 21, 8, 0, tzinfo=ZoneInfo("America/New_York"))
+    assert infer_us_regular_session_date(monday_morning) == "2026-09-18"
+
+
+def test_sina_fetch_attaches_session_date_without_network(monkeypatch):
+    payload = "09:30:00,10,100.5,101.0;10:15:00,12,100.8,102.0"
+
+    def _fake_get(url, **kwargs):
+        if "getMinline" in url:
+            return payload
+        return (
+            'var hq_str_gb_mrvl="' + ",".join(["x"] * 25)
+            + ',Sep 22 04:00PM EDT,99.5";'
+        )
+
+    monkeypatch.setattr("marketdata.vendors.trends.market_get", _fake_get)
+    monkeypatch.setattr(
+        "marketdata.vendors.trends._now_ny",
+        lambda: datetime(2026, 9, 23, 10, 20, tzinfo=ZoneInfo("America/New_York")),
+    )
+    bars = SinaTrendsVendor().fetch([__import__("marketdata").Symbol.parse("MRVL", "US")], {})
+    assert bars.vendor == "sina"
+    assert bars.prev_close == 99.5
+    assert bars[0].time == "2026-09-23 09:30"
+    assert bars[-1].price == 102.0
+    assert bars[-1].avg == 100.8
+
+
+def test_us_trends_prefers_sina_and_cn_still_uses_eastmoney(monkeypatch):
+    sina_calls = []
+    tencent_calls = []
+
+    def _sina(self, symbols, config):
+        sina_calls.append(symbols[0].code)
+        return parse_sina_us_minline(
+            "09:30:00,10,10.1,10.2",
+            session_date="2026-09-22",
+        )
+
+    def _eastmoney(self, symbols, config):
+        return parse_eastmoney_trends(
+            {"data": {"preClose": 1, "trends": ["2026-09-22 09:30,2,2,1,2"]}},
+            market=symbols[0].market.value,
+        )
+
+    def _tencent(self, symbols, config):
+        tencent_calls.append(symbols[0].code)
+        return parse_tencent_trends(
+            {"data": {"sh600519": {"data": {"date": "20260922", "data": ["0930 10 100 10"]}}}},
+            tsym="sh600519",
+            market="CN",
+        )
+
+    monkeypatch.setattr(SinaTrendsVendor, "fetch", _sina)
+    monkeypatch.setattr(EastmoneyTrendsVendor, "fetch", _eastmoney)
+    monkeypatch.setattr(TencentTrendsVendor, "fetch", _tencent)
+    md = MarketData(
+        config=StaticConfigProvider(
+            {
+                "trends": [
+                    SourceConfig(vendor="sina", priority=-1, enabled=True),
+                    SourceConfig(vendor="eastmoney", priority=0, enabled=True),
+                    SourceConfig(vendor="tencent", priority=5, enabled=True),
+                ]
+            }
+        )
+    )
+    us = md.trends("MRVL", market="US")
+    assert us.vendor == "sina"
+    assert us[0].price == 10.2
+    assert sina_calls == ["MRVL"]
+
+    cn = md.trends("600519", market="CN")
+    assert cn.vendor == "eastmoney"
+    assert cn[0].time.endswith("09:30")
+    assert tencent_calls == []
+    assert sina_calls == ["MRVL"]
+
+
+def test_us_trends_falls_through_to_eastmoney_when_sina_empty(monkeypatch):
+    def _sina(self, symbols, config):
+        return parse_sina_us_minline("", session_date="2026-09-22")
+
+    def _eastmoney(self, symbols, config):
+        return parse_eastmoney_trends(
+            {"data": {"preClose": 257, "trends": ["2026-09-22 21:30,255,255,1,1"]}},
+            market="US",
+        )
+
+    monkeypatch.setattr(SinaTrendsVendor, "fetch", _sina)
+    monkeypatch.setattr(EastmoneyTrendsVendor, "fetch", _eastmoney)
+    md = MarketData(
+        config=StaticConfigProvider(
+            {
+                "trends": [
+                    SourceConfig(vendor="sina", priority=-1, enabled=True),
+                    SourceConfig(vendor="eastmoney", priority=0, enabled=True),
+                ]
+            }
+        )
+    )
+    out = md.trends("MRVL", market="US")
+    assert out.vendor == "eastmoney"
+    assert out[0].time == "2026-09-22 09:30"
 
 
 def test_trends_engine_returns_vendor_points(monkeypatch):

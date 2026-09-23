@@ -1,14 +1,18 @@
-"""当日分时 vendors:东财(CN/HK/US)、腾讯(CN/HK)、Yahoo(US/HK,含美股盘前盘后)。
+"""当日分时 vendors:东财(CN/HK/US)、腾讯(CN/HK)、新浪(US 常规时段)、Yahoo(US/HK,含盘前盘后)。
 
 time 一律写成市场本地钟面,ts 为真实 Unix 秒。图表用 ts + 时区格式化,
 不能把 Unix 秒当 UTC 钟面直接画(否则 A 股 09:30 会显示成 01:30)。
 
 东财美股 trends2 的时间字符串是北京时间,不是美东。先按上海时区得到绝对时间,
 再写成美东钟面(含夏令时)。否则 09:30 会画成 21:30,过了北京零点还会被裁成从 00:00 起算。
+
+新浪美股分时是国内可直连的常规交易时段曲线(09:30–16:00 美东),不含盘前盘后。
+腾讯 minute/query 对美股只给一个收盘点,不能当成分时。
 """
 from __future__ import annotations
 
-from datetime import datetime
+import re
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from marketdata.http import market_get
@@ -22,6 +26,17 @@ _EASTMONEY_TRENDS_URLS = (
 )
 _TENCENT_MINUTE_URL = "https://web.ifzq.gtimg.cn/appstock/app/minute/query"
 _YAHOO_CHART_URL = "https://query2.finance.yahoo.com/v8/finance/chart/{sym}"
+# 新浪美股当日分时。整段是 JSON 字符串:「HH:MM:SS,成交量,均价,价格;...」。
+# 国内可直连,只覆盖常规交易时段。盘前盘后仍走 Yahoo(通常要代理)。
+_SINA_US_MINLINE_URL = (
+    "https://stock.finance.sina.com.cn/usstock/api/json.php/US_MinlineNService.getMinline"
+)
+_SINA_US_QUOTE_URL = "https://hq.sinajs.cn/list="
+_SINA_TRENDS_HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://finance.sina.com.cn/"}
+_EN_MONTH = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
 
 # CN/HK 分时钟面用上海时区(与香港无夏令时,钟面一致)。美股用美东,含夏令时。
 MARKET_TZ = {
@@ -314,6 +329,168 @@ def parse_yahoo_trends(payload: dict | None, *, market: str) -> TrendBars:
     return bars
 
 
+def _now_ny() -> datetime:
+    return datetime.now(ZoneInfo("America/New_York"))
+
+
+def _as_ny(now: datetime) -> datetime:
+    tz = ZoneInfo("America/New_York")
+    if now.tzinfo is None:
+        return now.replace(tzinfo=tz)
+    return now.astimezone(tz)
+
+
+def infer_us_regular_session_date(now: datetime) -> str:
+    """没有收盘戳时,用美东钟面推断新浪分时属于哪一个常规交易日。
+
+    开盘前和周末回退到上一工作日。不含交易所假日表;假日靠报价里的收盘日期修正。
+    """
+    current = _as_ny(now)
+    session = current.date()
+    if current.time() < time(9, 30):
+        session -= timedelta(days=1)
+    while session.weekday() >= 5:
+        session -= timedelta(days=1)
+    return session.isoformat()
+
+
+def _us_minline_in_progress(now_et: datetime, last_hhmm: str) -> bool:
+    """曲线还在往前印,才是「今天」这场;已经收到 16:00 就是上一场完整分时。"""
+    if now_et.weekday() >= 5 or len(last_hhmm) < 5:
+        return False
+    clock = now_et.time()
+    if clock < time(9, 30) or clock > time(16, 10):
+        return False
+    if last_hhmm >= "16:00":
+        return False
+    # 最后一根比当前钟面还晚,说明这是上一场提前收盘的完整曲线,不是今天。
+    return last_hhmm <= now_et.strftime("%H:%M")
+
+
+def parse_sina_us_close_stamp(text: str, now: datetime) -> datetime | None:
+    """新浪美股报价第 26 列:「Sep 22 04:00PM EDT」。只要日期,不依赖系统 locale。"""
+    match = re.match(r"([A-Za-z]{3})\s+(\d{1,2})", (text or "").strip())
+    if not match:
+        return None
+    month = _EN_MONTH.get(match.group(1).lower())
+    if month is None:
+        return None
+    current = _as_ny(now)
+    try:
+        stamp = datetime(current.year, month, int(match.group(2)), tzinfo=ZoneInfo("America/New_York"))
+    except ValueError:
+        return None
+    if stamp.date() > current.date() + timedelta(days=1):
+        stamp = stamp.replace(year=current.year - 1)
+    return stamp
+
+
+def parse_sina_us_quote_meta(text: str | None, now: datetime) -> tuple[float | None, datetime | None]:
+    """昨收在第 27 列(下标 26),常规收盘戳在第 26 列(下标 25)。与 sina 行情 vendor 对齐。"""
+    if not text:
+        return None, None
+    matched = re.search(r'="(.*)"', text)
+    body = matched.group(1) if matched else text
+    parts = body.split(",")
+    if len(parts) <= 26:
+        return None, None
+    return _f(parts[26]), parse_sina_us_close_stamp(parts[25], now)
+
+
+def resolve_us_minline_session_date(
+    now: datetime,
+    last_clock: str,
+    close_stamp: datetime | None = None,
+) -> str:
+    """给没有日期的新浪分时补上交易日。
+
+    盘中曲线用当天。已经走到 16:00 的完整曲线用报价里的收盘日,
+    这样节假日白天不会把上一交易日画成今天。报价缺失时退回钟面推断。
+    """
+    current = _as_ny(now)
+    if _us_minline_in_progress(current, (last_clock or "")[:5]):
+        return current.date().isoformat()
+    if close_stamp is not None:
+        return _as_ny(close_stamp).date().isoformat()
+    return infer_us_regular_session_date(current)
+
+
+def _sina_minline_text(payload) -> str:
+    if isinstance(payload, str):
+        return payload.strip().strip('"')
+    return ""
+
+
+def _minline_last_clock(payload) -> str:
+    last = ""
+    for row in _sina_minline_text(payload).split(";"):
+        parts = row.split(",")
+        if len(parts) >= 4 and ":" in parts[0]:
+            last = parts[0].strip()[:5]
+    return last
+
+
+def parse_sina_us_minline(
+    payload,
+    *,
+    session_date: str,
+    prev_close: float | None = None,
+) -> TrendBars:
+    """新浪 US_MinlineNService:「HH:MM:SS,成交量,均价,价格」,分号分隔。
+
+    时间为美东钟面,没有日期,由 session_date 补上。成交量是这一分钟的量,不是累计。
+    均价是源给的当日均价,不要再用成交额重算。
+    """
+    bars = TrendBars(timezone="America/New_York", vendor="sina", prev_close=prev_close)
+    text = _sina_minline_text(payload)
+    if not text or text.startswith("{"):
+        return bars
+    points: list[TrendPoint] = []
+    for row in text.split(";"):
+        parts = row.split(",")
+        if len(parts) < 4:
+            continue
+        clock = parts[0].strip()
+        if len(clock) < 5 or clock[2] != ":":
+            continue
+        price = _f(parts[3])
+        avg = _f(parts[2])
+        volume = _f(parts[1])
+        if price is None:
+            continue
+        parsed = _local_ts(f"{session_date} {clock[:5]}", "America/New_York")
+        if parsed is None:
+            continue
+        time_text, ts = parsed
+        points.append(
+            TrendPoint(
+                time=time_text,
+                ts=ts,
+                price=price,
+                avg=price if avg is None else avg,
+                volume=volume or 0.0,
+            )
+        )
+    bars.extend(_keep_latest_session(points))
+    return bars
+
+
+def _fetch_sina_us_quote_meta(code: str, now: datetime) -> tuple[float | None, datetime | None]:
+    text = market_get(
+        _SINA_US_QUOTE_URL + f"gb_{code.lower()}",
+        host_key="hq.sinajs.cn",
+        headers=_SINA_TRENDS_HEADERS,
+        parse="text",
+        encoding="gbk",
+        timeout=8,
+        retries=1,
+        min_interval_s=0.0,
+        log_label="新浪美股昨收",
+        symbol=code,
+    )
+    return parse_sina_us_quote_meta(text, now)
+
+
 def _eastmoney_params(secid: str) -> dict:
     return {
         "secid": secid,
@@ -393,3 +570,39 @@ class YahooTrendsVendor(TrendsVendor):
             log_label="Yahoo分时", symbol=ysym,
         )
         return parse_yahoo_trends(payload, market=sym.market.value)
+
+
+class SinaTrendsVendor(TrendsVendor):
+    """美股常规时段分时。国内直连,不覆盖 A 股/港股,也不含盘前盘后。"""
+
+    name = "sina"
+    supports_markets = {"US"}
+
+    def fetch(self, symbols: list[Symbol], config: dict) -> TrendBars:
+        if not symbols:
+            return TrendBars()
+        sym = symbols[0]
+        if sym.market != Market.US:
+            return TrendBars(timezone=market_timezone(sym.market.value))
+        code = sym.code.strip().upper()
+        bars = TrendBars(timezone="America/New_York", vendor="sina")
+        if not code:
+            return bars
+        payload = market_get(
+            _SINA_US_MINLINE_URL,
+            host_key="stock.finance.sina.com.cn",
+            min_interval_s=0.15,
+            params={"symbol": code, "day": "1"},
+            headers=_SINA_TRENDS_HEADERS,
+            timeout=12,
+            retries=1,
+            parse="json",
+            log_label="新浪美股分时",
+            symbol=code,
+        )
+        if not _sina_minline_text(payload):
+            return bars
+        now = _now_ny()
+        prev_close, close_stamp = _fetch_sina_us_quote_meta(code, now)
+        session_date = resolve_us_minline_session_date(now, _minline_last_clock(payload), close_stamp)
+        return parse_sina_us_minline(payload, session_date=session_date, prev_close=prev_close)

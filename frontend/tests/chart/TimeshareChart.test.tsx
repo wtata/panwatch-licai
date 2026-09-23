@@ -120,4 +120,13 @@ describe('TimeshareChart 刻度', () => {
     expect(again.options.timeScale.tickMarkFormatter(usClose, 3)).toBe('04:00')
     expect(screen.getByRole('button', { name: '北京' }).getAttribute('aria-pressed')).toBe('true')
   })
+
+  it('美股没有点时展示接口给出的空状态说明', async () => {
+    fetchMock.mockResolvedValue({
+      points: [],
+      hint: '暂无美股当日分时。请确认新浪美股分时已启用。',
+    })
+    render(<TimeshareChart symbol="MRVL" market="US" />)
+    expect(await screen.findByText(/新浪美股分时已启用/)).toBeTruthy()
+  })
 })
