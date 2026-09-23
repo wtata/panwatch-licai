@@ -1,4 +1,4 @@
-"""K 线 vendors:腾讯(全市场)/ Stooq(US)/ 东财(CN/HK)/ Yahoo(US/HK)。移植自 PanWatch kline_collector 抓取核。"""
+"""K 线 vendors:腾讯(全市场)/ 新浪(CN/US)/ Stooq(US)/ 东财(CN/HK)/ Yahoo(US/HK)。移植自 PanWatch kline_collector 抓取核。"""
 from __future__ import annotations
 
 import json
@@ -12,10 +12,19 @@ from marketdata.vendors.base import KlineVendor
 
 logger = logging.getLogger(__name__)
 
-_TENCENT_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+# ifzq 在部分机房会直接 HTTP 501;qq 财经反代是同一份日K,主站失败时再试一次。
+_TENCENT_KLINE_URLS = (
+    "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+    "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/fqkline/get",
+)
 _EASTMONEY_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
 _STOOQ_URL = "https://stooq.com/q/d/l/"
 _YAHOO_CHART_URL = "https://query2.finance.yahoo.com/v8/finance/chart/{sym}"
+_SINA_CN_KLINE_URL = (
+    "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData"
+)
+_SINA_US_KLINE_URL = "https://stock.finance.sina.com.cn/usstock/api/json.php/US_MinKService.getDailyK"
+_SINA_HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://finance.sina.com.cn/"}
 
 
 def _days(config: dict, default: int = 60) -> int:
@@ -31,18 +40,7 @@ def _days(config: dict, default: int = 60) -> int:
 _TENCENT_MAX_COUNT = 800
 
 
-def fetch_tencent_kline_raw(tsym: str, days: int) -> list[Bar]:
-    """按**原始腾讯符号**取日K(不经 Symbol 转换)。
-
-    供指数等显式符号场景复用(sh000001/hkHSI/usDJI…;指数与个股的符号规则不同,
-    必须显式传入)。个股路径请走 TencentKlineVendor。
-    """
-    days = min(max(int(days or 1), 1), _TENCENT_MAX_COUNT)
-    text = market_get(
-        _TENCENT_URL, host_key="web.ifzq.gtimg.cn", min_interval_s=0.15,
-        params={"param": f"{tsym},day,,,{days},qfq", "_var": "kline_dayqfq"},
-        timeout=10, retries=2, parse="text", log_label="腾讯K线", symbol=tsym,
-    )
+def _parse_tencent_kline_text(text: str | None, tsym: str) -> list[Bar]:
     if not text or "=" not in text:
         return []
     js = text.split("=", 1)[1].strip().rstrip(";")
@@ -68,6 +66,27 @@ def fetch_tencent_kline_raw(tsym: str, days: int) -> list[Bar]:
             except Exception:
                 continue
     return out
+
+
+def fetch_tencent_kline_raw(tsym: str, days: int) -> list[Bar]:
+    """按**原始腾讯符号**取日K(不经 Symbol 转换)。
+
+    供指数等显式符号场景复用(sh000001/hkHSI/usDJI…;指数与个股的符号规则不同,
+    必须显式传入)。个股路径请走 TencentKlineVendor。
+    """
+    days = min(max(int(days or 1), 1), _TENCENT_MAX_COUNT)
+    params = {"param": f"{tsym},day,,,{days},qfq", "_var": "kline_dayqfq"}
+    for url in _TENCENT_KLINE_URLS:
+        host = url.split("/")[2]
+        text = market_get(
+            url, host_key=host, min_interval_s=0.15,
+            params=params,
+            timeout=10, retries=1, parse="text", log_label="腾讯K线", symbol=tsym,
+        )
+        bars = _parse_tencent_kline_text(text, tsym)
+        if bars:
+            return bars
+    return []
 
 
 # 腾讯美股日K必须带交易所后缀(usTSLA.OQ=纳斯达克 / usBABA.N=纽交所);裸 us{CODE}
@@ -192,6 +211,79 @@ class EastmoneyKlineVendor(KlineVendor):
             return []
         days = _days(config)
         return fetch_eastmoney_kline(_em_secid(sym), days)
+
+
+def parse_sina_kline(payload, *, market: str) -> list[Bar]:
+    """新浪日K。CN 字段 day/open/high/low/close/volume;US 字段 d/o/h/l/c/v。"""
+    if not isinstance(payload, list):
+        return []
+    cn = (market or "").upper() == "CN"
+    out: list[Bar] = []
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        if cn:
+            date, o, h, low, c, v = (
+                row.get("day"), row.get("open"), row.get("high"),
+                row.get("low"), row.get("close"), row.get("volume"),
+            )
+        else:
+            date, o, h, low, c, v = (
+                row.get("d"), row.get("o"), row.get("h"),
+                row.get("l"), row.get("c"), row.get("v"),
+            )
+        if not date:
+            continue
+        try:
+            out.append(Bar(
+                date=str(date)[:10],
+                open=float(o),
+                close=float(c),
+                high=float(h),
+                low=float(low),
+                volume=float(v) if v not in (None, "") else 0.0,
+            ))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+class SinaKlineVendor(KlineVendor):
+    """新浪日K。腾讯 501、东财断连时给 A 股/美股一条还能返回的路。港股此接口无数据。"""
+
+    name = "sina"
+    supports_markets = {"CN", "US"}
+
+    def fetch(self, symbols: list[Symbol], config: dict) -> list[Bar]:
+        if not symbols:
+            return []
+        sym = symbols[0]
+        days = _days(config)
+        if sym.market == Market.CN:
+            tsym = sym.to_tencent()
+            payload = market_get(
+                _SINA_CN_KLINE_URL, host_key="money.finance.sina.com.cn", min_interval_s=0.15,
+                params={"symbol": tsym, "scale": "240", "ma": "no", "datalen": str(min(max(days, 1), 2000))},
+                headers=_SINA_HEADERS,
+                timeout=12, retries=1, parse="json", log_label="新浪K线", symbol=tsym,
+            )
+            bars = parse_sina_kline(payload, market="CN")
+        elif sym.market == Market.US:
+            code = sym.code.strip().upper()
+            if not code:
+                return []
+            payload = market_get(
+                _SINA_US_KLINE_URL, host_key="stock.finance.sina.com.cn", min_interval_s=0.15,
+                params={"symbol": code},
+                headers=_SINA_HEADERS,
+                timeout=15, retries=1, parse="json", log_label="新浪K线", symbol=code,
+            )
+            bars = parse_sina_kline(payload, market="US")
+        else:
+            return []
+        if days > 0 and len(bars) > days:
+            bars = bars[-days:]
+        return bars
 
 
 def _yahoo_range(days: int) -> str:

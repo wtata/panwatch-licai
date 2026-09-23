@@ -400,12 +400,25 @@ DATA_SOURCE_SEEDS: list[dict] = [
             "test_symbols": ["601127", "600519", "300750"],
         },
         {
+            "name": "新浪K线",
+            "type": "kline",
+            "provider": "sina",
+            "config": {
+                "description": "新浪日K(CN/US,免 key)。腾讯失败后、东财之前的兜底;"
+                "东财 push2his 断连或 Stooq 超时时仍能出日K。",
+            },
+            "enabled": True,
+            "priority": 4,  # 腾讯(0)之后、东财(5)之前
+            "supports_batch": False,
+            "test_symbols": ["600719", "AAPL"],
+        },
+        {
             "name": "东方财富 K线",
             "type": "kline",
             "provider": "eastmoney",
             "config": {"description": "东方财富日线,A股/港股长历史兜底(免 key)。"},
             "enabled": True,
-            "priority": 5,   # 腾讯(0)之后、Tushare(10)之前 → CN/HK 兜底
+            "priority": 5,   # 腾讯(0)、新浪(4)之后 → CN/HK 兜底
             "supports_batch": False,
             "test_symbols": ["600519", "00700"],
         },

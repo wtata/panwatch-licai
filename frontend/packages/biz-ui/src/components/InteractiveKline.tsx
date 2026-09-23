@@ -635,6 +635,10 @@ export default function InteractiveKline(props: {
           <div className="w-full h-[380px] rounded-xl overflow-hidden border border-border/50 p-3 animate-pulse">
             <div className="h-full w-full rounded-lg bg-accent/20" />
           </div>
+        ) : !series.klines.length ? (
+          <div className="w-full h-[380px] rounded-xl overflow-hidden border border-border/50 flex items-center justify-center px-6 text-center text-[13px] text-muted-foreground">
+            暂无K线数据。行情源暂时没有返回，可稍后刷新。
+          </div>
         ) : (
           <div ref={containerRef} className="w-full h-[380px] rounded-xl overflow-hidden border border-border/50" />
         )}
@@ -659,6 +663,7 @@ export default function InteractiveKline(props: {
           </div>
         ) : null}
       </div>
+      {showSkeleton || series.klines.length ? (
       <div className="mt-3 grid grid-cols-1 gap-3">
         <div>
           <div className="text-[11px] text-muted-foreground mb-1">动能指标（MACD{showRsi ? ' + RSI强弱线' : ''}）</div>
@@ -674,6 +679,7 @@ export default function InteractiveKline(props: {
           )}
         </div>
       </div>
+      ) : null}
       </>
       )}
     </div>

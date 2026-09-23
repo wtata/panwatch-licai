@@ -43,6 +43,63 @@ def test_eastmoney_cn_clock_is_shanghai_unix():
     assert bars.timezone == "Asia/Shanghai"
 
 
+def test_tencent_cn_turnover_avg_converts_lots_to_shares():
+    """A股主板腾讯分时:成交量是累计手、成交额是累计元。均价=成交额/(成交量×100),应贴近现价。"""
+    payload = {
+        "data": {
+            "sh600719": {
+                "data": {
+                    "date": "20260923",
+                    "data": [
+                        "0930 8.03 1028 825484.00",
+                        "0931 7.88 10748 8538684.00",
+                    ],
+                },
+                "qt": {"sh600719": ["1", "大连热电", "600719", "7.88", "8.07"]},
+            }
+        }
+    }
+    bars = parse_tencent_trends(payload, tsym="sh600719", market="CN")
+    assert len(bars) == 2
+    assert abs(bars[0].avg - 8.03) < 0.02
+    assert abs(bars[0].avg - bars[0].price) / bars[0].price < 0.05
+    assert abs(bars[1].avg - (8538684.00 / (10748 * 100))) < 0.02
+    assert bars[1].avg < 20
+    assert bars[0].volume == 1028
+    assert bars[1].volume == 9720
+
+
+def test_tencent_star_and_hk_turnover_already_in_shares():
+    """科创板和港股成交量已是股,不能再除以 100。"""
+    star = {
+        "data": {
+            "sh688981": {
+                "data": {
+                    "date": "20260923",
+                    "data": ["0930 122.40 96754 11842689.60"],
+                }
+            }
+        }
+    }
+    bars = parse_tencent_trends(star, tsym="sh688981", market="CN")
+    assert abs(bars[0].avg - 122.40) < 0.05
+    assert bars[0].avg > 50
+
+    hk = {
+        "data": {
+            "hk00700": {
+                "data": {
+                    "date": "20260923",
+                    "data": ["0930 453.400 992543 448890209.730"],
+                }
+            }
+        }
+    }
+    hk_bars = parse_tencent_trends(hk, tsym="hk00700", market="HK")
+    assert abs(hk_bars[0].avg - (448890209.730 / 992543)) < 0.05
+    assert hk_bars[0].avg > 400
+
+
 def test_tencent_minute_uses_market_local_clock():
     payload = {
         "data": {
