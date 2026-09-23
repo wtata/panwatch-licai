@@ -1137,9 +1137,12 @@ async def scan_intraday(analyze: bool = False, db: Session = Depends(get_db)):
                             pass
 
                         system_prompt, user_content = agent.build_prompt(data, context)
-                        response = await context.ai_client.chat(
-                            system_prompt, user_content
-                        )
+                        from src.platform.ai.usage_tracker import llm_scene
+
+                        with llm_scene(agent_name):
+                            response = await context.ai_client.chat(
+                                system_prompt, user_content
+                            )
 
                         # 解析结构化建议
                         suggestion = agent._parse_suggestion(response)

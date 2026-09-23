@@ -191,7 +191,10 @@ class BaseAgent(ABC):
     async def analyze(self, context: AgentContext, data: dict) -> AnalysisResult:
         """调用 AI 分析"""
         system_prompt, user_content = self.build_prompt(data, context)
-        content = await context.ai_client.chat(system_prompt, user_content)
+        from src.platform.ai.usage_tracker import llm_scene
+
+        with llm_scene(self.name):
+            content = await context.ai_client.chat(system_prompt, user_content)
 
         # 标题含股票信息
         stock_names = "、".join(s.name for s in context.watchlist[:5])

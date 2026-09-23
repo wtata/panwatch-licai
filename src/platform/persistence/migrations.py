@@ -1950,6 +1950,40 @@ def _m127_discipline_tables(conn: Connection) -> None:
         conn.execute(seed_sql, {"body": body, "enabled": 1})
 
 
+def _m128_llm_usage_records(conn: Connection) -> None:
+    conn.execute(
+        text(
+            """
+        CREATE TABLE IF NOT EXISTS llm_usage_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            day TEXT NOT NULL DEFAULT '',
+            scene TEXT NOT NULL DEFAULT 'llm',
+            operation TEXT NOT NULL DEFAULT 'chat',
+            model TEXT NOT NULL DEFAULT '',
+            prompt_tokens INTEGER DEFAULT 0,
+            completion_tokens INTEGER DEFAULT 0,
+            total_tokens INTEGER DEFAULT 0,
+            cost_usd FLOAT DEFAULT 0,
+            source TEXT DEFAULT 'api',
+            agent_name TEXT DEFAULT '',
+            trace_id TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+        )
+    )
+    _create_index_if_missing(
+        conn,
+        "ix_llm_usage_created",
+        "CREATE INDEX ix_llm_usage_created ON llm_usage_records(created_at)",
+    )
+    _create_index_if_missing(
+        conn,
+        "ix_llm_usage_day_scene",
+        "CREATE INDEX ix_llm_usage_day_scene ON llm_usage_records(day, scene)",
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(101, "agent_config_kind_and_visibility", _m101_agent_config_kind),
     Migration(102, "backfill_agent_kind_data", _m102_backfill_agent_kind),
@@ -1976,6 +2010,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(123, "assistant_approval_workflow", _m123_assistant_approval_workflow),
     Migration(124, "assistant_context_snapshots", _m124_assistant_context_snapshots),
     Migration(127, "discipline_journal_and_rules", _m127_discipline_tables),
+    Migration(128, "llm_usage_records", _m128_llm_usage_records),
 )
 
 

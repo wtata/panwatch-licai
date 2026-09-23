@@ -661,7 +661,10 @@ class PremarketOutlookAgent(BaseAgent):
             (user_content.count("\n") + 1) if user_content else 0,
         )
         logger.info("[%s] AI请求开始", trace_id)
-        content = await context.ai_client.chat(system_prompt, user_content)
+        from src.platform.ai.usage_tracker import llm_scene
+
+        with llm_scene(self.name):
+            content = await context.ai_client.chat(system_prompt, user_content)
         logger.info("[%s] AI请求完成: response_chars=%s", trace_id, len(content or ""))
 
         if context.model_label:

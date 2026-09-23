@@ -204,11 +204,14 @@ async def test_model(model_id: int, db: Session = Depends(get_db)):
         )
         # 测试连通性时不下发 temperature:部分模型(如 o1/claude-opus 等)不接受该参数,
         # 省略后对所有模型都安全,避免因 temperature 报错而误判模型不可用。
-        reply = await client.chat(
-            system_prompt="You are a helpful assistant.",
-            user_content="Say 'OK' in one word.",
-            temperature=None,
-        )
+        from src.platform.ai.usage_tracker import llm_scene
+
+        with llm_scene("model_test"):
+            reply = await client.chat(
+                system_prompt="You are a helpful assistant.",
+                user_content="Say 'OK' in one word.",
+                temperature=None,
+            )
         return {"ok": True, "reply": reply.strip()}
     except Exception as e:
         raise HTTPException(400, f"测试失败: {e}")
