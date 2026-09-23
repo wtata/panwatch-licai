@@ -302,7 +302,30 @@ def test_sina_fetch_attaches_session_date_without_network(monkeypatch):
     assert bars[-1].avg == 100.8
 
 
-def test_us_trends_prefers_sina_and_cn_still_uses_eastmoney(monkeypatch):
+def test_eastmoney_trends_falls_through_to_push2his(monkeypatch):
+    seen = []
+
+    def _get(url, **kwargs):
+        seen.append(url)
+        if "push2his" not in url:
+            return None
+        return {"data": {"preClose": 10, "trends": ["2026-09-22 09:30,10.2,10.1,100,1"]}}
+
+    monkeypatch.setattr("marketdata.vendors.trends.market_get", _get)
+    from marketdata.symbol import Symbol
+
+    bars = EastmoneyTrendsVendor().fetch([Symbol.parse("600519", "CN")], {})
+    assert [u.split("/")[2] for u in seen] == [
+        "push2delay.eastmoney.com",
+        "push2.eastmoney.com",
+        "push2his.eastmoney.com",
+    ]
+    assert len(bars) == 1
+    assert bars[0].price == 10.2
+    assert bars.vendor == "eastmoney"
+
+
+def test_us_trends_keeps_eastmoney_when_it_has_bars(monkeypatch):
     sina_calls = []
     tencent_calls = []
 
@@ -334,34 +357,30 @@ def test_us_trends_prefers_sina_and_cn_still_uses_eastmoney(monkeypatch):
         config=StaticConfigProvider(
             {
                 "trends": [
-                    SourceConfig(vendor="sina", priority=-1, enabled=True),
                     SourceConfig(vendor="eastmoney", priority=0, enabled=True),
                     SourceConfig(vendor="tencent", priority=5, enabled=True),
+                    SourceConfig(vendor="sina", priority=8, enabled=True),
                 ]
             }
         )
     )
     us = md.trends("MRVL", market="US")
-    assert us.vendor == "sina"
-    assert us[0].price == 10.2
-    assert sina_calls == ["MRVL"]
+    assert us.vendor == "eastmoney"
+    assert sina_calls == []
 
     cn = md.trends("600519", market="CN")
     assert cn.vendor == "eastmoney"
     assert cn[0].time.endswith("09:30")
     assert tencent_calls == []
-    assert sina_calls == ["MRVL"]
+    assert sina_calls == []
 
 
-def test_us_trends_falls_through_to_eastmoney_when_sina_empty(monkeypatch):
+def test_us_trends_uses_sina_only_after_eastmoney_is_empty(monkeypatch):
     def _sina(self, symbols, config):
-        return parse_sina_us_minline("", session_date="2026-09-22")
+        return parse_sina_us_minline("09:30:00,10,10.1,10.2", session_date="2026-09-22")
 
     def _eastmoney(self, symbols, config):
-        return parse_eastmoney_trends(
-            {"data": {"preClose": 257, "trends": ["2026-09-22 21:30,255,255,1,1"]}},
-            market="US",
-        )
+        return parse_eastmoney_trends({"data": {"trends": []}}, market="US")
 
     monkeypatch.setattr(SinaTrendsVendor, "fetch", _sina)
     monkeypatch.setattr(EastmoneyTrendsVendor, "fetch", _eastmoney)
@@ -369,15 +388,16 @@ def test_us_trends_falls_through_to_eastmoney_when_sina_empty(monkeypatch):
         config=StaticConfigProvider(
             {
                 "trends": [
-                    SourceConfig(vendor="sina", priority=-1, enabled=True),
                     SourceConfig(vendor="eastmoney", priority=0, enabled=True),
+                    SourceConfig(vendor="sina", priority=8, enabled=True),
                 ]
             }
         )
     )
     out = md.trends("MRVL", market="US")
-    assert out.vendor == "eastmoney"
+    assert out.vendor == "sina"
     assert out[0].time == "2026-09-22 09:30"
+    assert out[0].price == 10.2
 
 
 def test_trends_engine_returns_vendor_points(monkeypatch):
