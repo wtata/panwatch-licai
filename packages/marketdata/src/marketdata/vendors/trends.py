@@ -20,14 +20,17 @@ from marketdata.symbol import Market, Symbol
 from marketdata.types import TrendPoint
 from marketdata.vendors.base import TrendsVendor
 
+# push2 / push2delay 在部分网络上会 502 或直接断连。push2his 是日 K 已经在用的同一套 trends2,
+# 今早美股分时能画出来走的就是东财这条,不是 Yahoo。
 _EASTMONEY_TRENDS_URLS = (
     "https://push2delay.eastmoney.com/api/qt/stock/trends2/get",
     "https://push2.eastmoney.com/api/qt/stock/trends2/get",
+    "https://push2his.eastmoney.com/api/qt/stock/trends2/get",
 )
 _TENCENT_MINUTE_URL = "https://web.ifzq.gtimg.cn/appstock/app/minute/query"
 _YAHOO_CHART_URL = "https://query2.finance.yahoo.com/v8/finance/chart/{sym}"
 # 新浪美股当日分时。整段是 JSON 字符串:「HH:MM:SS,成交量,均价,价格;...」。
-# 国内可直连,只覆盖常规交易时段。盘前盘后仍走 Yahoo(通常要代理)。
+# 东财三个主机都空了才用。只覆盖常规交易时段。盘前盘后仍是 Yahoo,种子里默认关。
 _SINA_US_MINLINE_URL = (
     "https://stock.finance.sina.com.cn/usstock/api/json.php/US_MinlineNService.getMinline"
 )

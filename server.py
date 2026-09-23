@@ -446,13 +446,16 @@ DATA_SOURCE_SEEDS: list[dict] = [
             "supports_batch": False,
             "test_symbols": ["AAPL", "00700"],
         },
-        # 当日分时(价格/均价/成交量)。美股常规时段走新浪(免代理)。
-        # Yahoo 默认关:国内通常要代理,只补盘前盘后。
+        # 当日分时。今早线上有曲线的是东财(priority 0),不是 Yahoo。
+        # Yahoo分时从 PR6 引入起就是 enabled=False;reconcile 只补缺失行,不会把已开启的行改回关。
         {
             "name": "东方财富分时",
             "type": "trends",
             "provider": "eastmoney",
-            "config": {"description": "东方财富当日分时(CN/HK/US)。时间为市场本地钟面。"},
+            "config": {
+                "description": "东方财富当日分时(CN/HK/US)。时间为市场本地钟面。"
+                "push2 502 时会再试 push2his(与日 K 同一主机)。",
+            },
             "enabled": True,
             "priority": 0,
             "supports_batch": False,
@@ -473,13 +476,13 @@ DATA_SOURCE_SEEDS: list[dict] = [
             "type": "trends",
             "provider": "sina",
             "config": {
-                "description": "新浪美股常规时段分时(US_MinlineNService,免 key 免代理)。"
+                "description": "新浪美股常规时段分时(US_MinlineNService,免 key)。"
                 "只服务 US,不会抢 A 股/港股的东财和腾讯。"
-                "国内 ECS 上东财分时常断连、腾讯 minute 不含美股分钟,所以本源优先级高于东财,"
-                "避免美股分时先空等东财超时。时间为美东 09:30–16:00,不含盘前盘后。",
+                "排在东财之后:东财有数据时仍用东财(与今早线上一致);"
+                "东财空了再用这里。时间为美东 09:30–16:00,不含盘前盘后。",
             },
             "enabled": True,
-            "priority": -1,  # 仅 US;排在东财(0)之前。CN/HK 因 supports_markets 会直接跳过
+            "priority": 8,  # 腾讯(5)之后、Yahoo(20)之前。CN/HK 因 supports_markets 会直接跳过
             "supports_batch": False,
             "test_symbols": ["MRVL", "AAPL"],
         },
@@ -489,8 +492,8 @@ DATA_SOURCE_SEEDS: list[dict] = [
             "provider": "yahoo",
             "config": {
                 "description": "Yahoo 1 分钟分时(US/HK),includePrePost 含美股盘前盘后。"
-                "美股常规时段已由新浪分时覆盖,不必为了看见当日分时而打开本源。"
-                "国内访问 Yahoo 通常需代理,只在需要盘前盘后、且 config.proxy 已填写时再启用。",
+                "种子从引入起就是关。对账不会改已有行的 enabled;"
+                "若库里已经手动开过,重启不会把它关掉。需要盘前盘后时再开,proxy 留空则走系统代理。",
                 "proxy": "",
             },
             "enabled": False,
