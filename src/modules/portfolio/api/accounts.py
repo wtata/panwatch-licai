@@ -819,12 +819,15 @@ async def portfolio_screenshot_scan(data: ScreenshotScanRequest, db: Session = D
         with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
             tmp.write(blob)
             tmp_path = Path(tmp.name)
-        raw = await get_configured_failover_client(db, data.model_id).chat(
-            VISION_SYSTEM_PROMPT,
-            VISION_USER_PROMPT,
-            images=[str(tmp_path)],
-            temperature=0,
-        )
+        from src.platform.ai.usage_tracker import llm_scene
+
+        with llm_scene("screenshot_scan"):
+            raw = await get_configured_failover_client(db, data.model_id).chat(
+                VISION_SYSTEM_PROMPT,
+                VISION_USER_PROMPT,
+                images=[str(tmp_path)],
+                temperature=0,
+            )
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -879,7 +882,12 @@ async def portfolio_ai_review(model_id: int | None = None, db: Session = Depends
     )
     user_content = "组合概况:\n" + "\n".join(lines)
     try:
-        content = await get_configured_failover_client(db, model_id).chat(system_prompt, user_content, temperature=0.3)
+        from src.platform.ai.usage_tracker import llm_scene
+
+        with llm_scene("portfolio_checkup"):
+            content = await get_configured_failover_client(db, model_id).chat(
+                system_prompt, user_content, temperature=0.3
+            )
     except Exception as e:
         raise HTTPException(502, f"AI 体检失败: {e}")
 

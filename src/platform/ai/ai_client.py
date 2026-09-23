@@ -4,6 +4,10 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
+from src.platform.ai.usage_tracker import (
+    estimate_tokens_from_text,
+    record_llm_usage,
+)
 from src.platform.observability import otel
 
 logger = logging.getLogger(__name__)
@@ -26,6 +30,26 @@ class AIClient:
         self.api_key = api_key
         self.model = model
         self.total_tokens_used = 0
+
+    def _note_usage(self, usage, operation: str, *, source: str = "api") -> None:
+        if not usage:
+            return
+        prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
+        completion = int(getattr(usage, "completion_tokens", 0) or 0)
+        total = int(getattr(usage, "total_tokens", 0) or 0)
+        if prompt == 0 and completion == 0 and total:
+            prompt = total
+        if total:
+            self.total_tokens_used += total
+        else:
+            self.total_tokens_used += prompt + completion
+        record_llm_usage(
+            model=self.model,
+            prompt_tokens=prompt,
+            completion_tokens=completion,
+            operation=operation,
+            source=source,
+        )
 
     async def chat(
         self,
@@ -70,9 +94,8 @@ class AIClient:
             # OTel gen_ai span(默认关闭时为 no-op);token 用量在拿到 usage 后回填。
             with otel.llm_span(self.model, operation="chat") as _span:
                 response = await self.client.chat.completions.create(**create_kwargs)
-                # 记录 token 用量
+                self._note_usage(getattr(response, "usage", None), "chat")
                 if response.usage:
-                    self.total_tokens_used += response.usage.total_tokens
                     _span.set_response(
                         model=getattr(response, "model", None) or self.model,
                         input_tokens=response.usage.prompt_tokens,
@@ -111,8 +134,8 @@ class AIClient:
                 create_kwargs["max_tokens"] = max_tokens
             with otel.llm_span(self.model, operation="chat") as _span:
                 response = await self.client.chat.completions.create(**create_kwargs)
+                self._note_usage(getattr(response, "usage", None), "chat_multi")
                 if response.usage:
-                    self.total_tokens_used += response.usage.total_tokens
                     _span.set_response(
                         model=getattr(response, "model", None) or self.model,
                         input_tokens=response.usage.prompt_tokens,
@@ -147,8 +170,8 @@ class AIClient:
                 create_kwargs["temperature"] = temperature
             with otel.llm_span(self.model, operation="chat") as _span:
                 response = await self.client.chat.completions.create(**create_kwargs)
+                self._note_usage(getattr(response, "usage", None), "chat_with_tools")
                 if response.usage:
-                    self.total_tokens_used += response.usage.total_tokens
                     _span.set_response(
                         model=getattr(response, "model", None) or self.model,
                         input_tokens=response.usage.prompt_tokens,
@@ -187,22 +210,31 @@ class AIClient:
             create_kwargs["tools"] = tools
         if tool_choice is not None:
             create_kwargs["tool_choice"] = tool_choice
+        create_kwargs["stream_options"] = {"include_usage": True}
 
         try:
             stream = await self.client.chat.completions.create(**create_kwargs)
-        except Exception as e:
-            logger.error(f"AI 流式调用失败: {e}")
-            raise
+        except Exception:
+            create_kwargs.pop("stream_options", None)
+            try:
+                stream = await self.client.chat.completions.create(**create_kwargs)
+            except Exception as e:
+                logger.error(f"AI 流式调用失败: {e}")
+                raise
 
         content_parts: list[str] = []
         # OpenAI 流式协议下 tool_calls 按 index 分片下发（arguments 逐段拼接）
         tool_calls_acc: dict[int, dict] = {}
+        last_usage = None
 
         async for chunk in stream:
             # 部分兼容服务会在末尾单发一个只含 usage 的 chunk
             usage = getattr(chunk, "usage", None)
             if usage:
-                self.total_tokens_used += usage.total_tokens
+                last_usage = usage
+                total = int(getattr(usage, "total_tokens", 0) or 0)
+                if total:
+                    self.total_tokens_used += total
             if not chunk.choices:
                 continue
             delta = chunk.choices[0].delta
@@ -222,6 +254,34 @@ class AIClient:
                         acc["name"] = tc.function.name
                     if tc.function.arguments:
                         acc["arguments"] += tc.function.arguments
+
+        if last_usage:
+            prompt = int(getattr(last_usage, "prompt_tokens", 0) or 0)
+            completion = int(getattr(last_usage, "completion_tokens", 0) or 0)
+            total = int(getattr(last_usage, "total_tokens", 0) or 0)
+            if prompt == 0 and completion == 0 and total:
+                prompt = total
+            record_llm_usage(
+                model=self.model,
+                prompt_tokens=prompt,
+                completion_tokens=completion,
+                operation="chat_stream",
+                source="api",
+            )
+        else:
+            out_text = "".join(content_parts)
+            prompt_est = 0
+            for msg in messages:
+                content = msg.get("content") if isinstance(msg, dict) else None
+                if isinstance(content, str):
+                    prompt_est += estimate_tokens_from_text(content)
+            record_llm_usage(
+                model=self.model,
+                prompt_tokens=prompt_est,
+                completion_tokens=estimate_tokens_from_text(out_text),
+                operation="chat_stream",
+                source="estimated",
+            )
 
         yield (
             "message",

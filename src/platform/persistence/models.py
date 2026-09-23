@@ -1283,6 +1283,30 @@ class PersonalAccessToken(Base):
     created_at = Column(DateTime, server_default=func.now())
 
 
+class LlmUsageRecord(Base):
+    """单次大模型调用的 token 与估算费用。"""
+
+    __tablename__ = "llm_usage_records"
+    __table_args__ = (
+        Index("ix_llm_usage_created", "created_at"),
+        Index("ix_llm_usage_day_scene", "day", "scene"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    day = Column(String, nullable=False, default="")  # Asia/Shanghai YYYY-MM-DD
+    scene = Column(String, nullable=False, default="llm")
+    operation = Column(String, nullable=False, default="chat")
+    model = Column(String, nullable=False, default="")
+    prompt_tokens = Column(Integer, default=0)
+    completion_tokens = Column(Integer, default=0)
+    total_tokens = Column(Integer, default=0)
+    cost_usd = Column(Float, default=0.0)
+    source = Column(String, default="api")  # api / estimated
+    agent_name = Column(String, default="")
+    trace_id = Column(String, default="")
+    created_at = Column(DateTime, server_default=func.now())
+
+
 class MCPCallLog(Base):
     """每次 MCP tool 调用的审计记录(只存元数据,不存参数/结果明文)。"""
 
