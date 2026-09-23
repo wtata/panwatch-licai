@@ -131,6 +131,45 @@ class Position(Base):
     stock = relationship("Stock", back_populates="positions")
 
 
+class PortfolioTrade(Base):
+    """实盘买卖流水。与模拟盘 paper_trading_trades 分开，删账户后仍保留快照。"""
+
+    __tablename__ = "portfolio_trades"
+    __table_args__ = (
+        Index("ix_portfolio_trades_account_time", "account_id", "traded_at"),
+        Index("ix_portfolio_trades_stock", "stock_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(
+        Integer, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    stock_id = Column(
+        Integer, ForeignKey("stocks.id", ondelete="SET NULL"), nullable=True
+    )
+    account_name = Column(String, nullable=False, default="")
+    stock_symbol = Column(String, nullable=False, default="")
+    stock_name = Column(String, nullable=False, default="")
+    stock_market = Column(String, nullable=False, default="")
+    side = Column(String, nullable=False)  # buy / sell
+    quantity = Column(Integer, nullable=False)
+    price = Column(Float, nullable=False)  # 标的币种成交价
+    fee = Column(Float, nullable=False, default=0)  # 标的币种手续费
+    amount = Column(Float, nullable=False)  # 成交额 = 数量 * 价格，不含手续费
+    cash_delta = Column(Float, nullable=False)  # 人民币可用资金变动，买入为负
+    fx_rate = Column(Float, nullable=False, default=1)  # 标的币种兑人民币
+    position_quantity_before = Column(Integer, nullable=False, default=0)
+    position_quantity_after = Column(Integer, nullable=False, default=0)
+    cost_price_before = Column(Float, nullable=True)
+    cost_price_after = Column(Float, nullable=True)
+    invested_amount_before = Column(Float, nullable=True)
+    invested_amount_after = Column(Float, nullable=True)
+    available_funds_before = Column(Float, nullable=False, default=0)
+    available_funds_after = Column(Float, nullable=False, default=0)
+    note = Column(String, default="")
+    traded_at = Column(DateTime, server_default=func.now())
+
+
 class StockAgent(Base):
     """多对多: 每只股票可被多个 Agent 监控"""
 

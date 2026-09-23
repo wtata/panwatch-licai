@@ -1950,6 +1950,51 @@ def _m127_discipline_tables(conn: Connection) -> None:
         conn.execute(seed_sql, {"body": body, "enabled": 1})
 
 
+def _m129_portfolio_trades(conn: Connection) -> None:
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS portfolio_trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
+                stock_id INTEGER REFERENCES stocks(id) ON DELETE SET NULL,
+                account_name TEXT NOT NULL DEFAULT '',
+                stock_symbol TEXT NOT NULL DEFAULT '',
+                stock_name TEXT NOT NULL DEFAULT '',
+                stock_market TEXT NOT NULL DEFAULT '',
+                side TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                price FLOAT NOT NULL,
+                fee FLOAT NOT NULL DEFAULT 0,
+                amount FLOAT NOT NULL,
+                cash_delta FLOAT NOT NULL,
+                fx_rate FLOAT NOT NULL DEFAULT 1,
+                position_quantity_before INTEGER NOT NULL DEFAULT 0,
+                position_quantity_after INTEGER NOT NULL DEFAULT 0,
+                cost_price_before FLOAT,
+                cost_price_after FLOAT,
+                invested_amount_before FLOAT,
+                invested_amount_after FLOAT,
+                available_funds_before FLOAT NOT NULL DEFAULT 0,
+                available_funds_after FLOAT NOT NULL DEFAULT 0,
+                note TEXT DEFAULT '',
+                traded_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    _create_index_if_missing(
+        conn,
+        "ix_portfolio_trades_account_time",
+        "CREATE INDEX ix_portfolio_trades_account_time ON portfolio_trades(account_id, traded_at)",
+    )
+    _create_index_if_missing(
+        conn,
+        "ix_portfolio_trades_stock",
+        "CREATE INDEX ix_portfolio_trades_stock ON portfolio_trades(stock_id)",
+    )
+
+
 def _m128_llm_usage_records(conn: Connection) -> None:
     conn.execute(
         text(
@@ -2011,6 +2056,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(124, "assistant_context_snapshots", _m124_assistant_context_snapshots),
     Migration(127, "discipline_journal_and_rules", _m127_discipline_tables),
     Migration(128, "llm_usage_records", _m128_llm_usage_records),
+    Migration(129, "portfolio_trades", _m129_portfolio_trades),
 )
 
 
