@@ -1,4 +1,4 @@
-import { inferMarket, normalizeSymbol } from './parseHoldings'
+import { inferMarket, normalizeSymbol, parseSecurityCode, cleanStockName, namesCompatible } from './parseHoldings'
 import type { EditableHoldingRow, PositionRef, StockRef } from './types'
 
 export interface SearchHit {
@@ -51,24 +51,78 @@ function sameSymbol(a: string, aMarket: string, b: string, bMarket: string): boo
   return normalizeSymbol(a, marketA as 'CN' | 'HK' | 'US') === normalizeSymbol(b, marketB as 'CN' | 'HK' | 'US')
 }
 
+function pickUniqueNameHit(nameQuery: string, hits: SearchHit[]): SearchHit | undefined {
+  const query = cleanStockName(nameQuery)
+  if (!query) return undefined
+  const exact = hits.find((hit) => cleanStockName(hit.name) === query)
+  if (exact) return exact
+  const compatible = hits.filter((hit) => namesCompatible(query, hit.name))
+  if (compatible.length === 1) return compatible[0]
+  return undefined
+}
+
 export async function enrichRowFromSearch(
   row: EditableHoldingRow,
   searchStocks: HoldingImportDeps['searchStocks'],
 ): Promise<EditableHoldingRow> {
-  const market = row.market || inferMarket(row.symbol)
-  const symbol = normalizeSymbol(row.symbol, market)
+  const parsedCode = parseSecurityCode(row.symbol)
+  const nameQuery = cleanStockName(row.name)
   try {
-    const hits = await searchStocks(symbol, market)
-    const exact = hits.find((hit) => sameSymbol(hit.symbol, hit.market, symbol, market))
-    if (!exact) return { ...row, symbol, market }
+    if (parsedCode) {
+      const symbol = normalizeSymbol(parsedCode.symbol, parsedCode.market)
+      const hits = await searchStocks(symbol, parsedCode.market)
+      const exact = hits.find((hit) => sameSymbol(hit.symbol, hit.market, symbol, parsedCode.market))
+      if (exact && namesCompatible(row.name, exact.name)) {
+        return {
+          ...row,
+          symbol: normalizeSymbol(exact.symbol, (exact.market as EditableHoldingRow['market']) || parsedCode.market),
+          name: exact.name || row.name,
+          market: (exact.market as EditableHoldingRow['market']) || parsedCode.market,
+        }
+      }
+      if (exact && nameQuery && !namesCompatible(row.name, exact.name)) {
+        const nameHits = await searchStocks(nameQuery, '')
+        const exactName = pickUniqueNameHit(nameQuery, nameHits)
+        if (exactName) {
+          return {
+            ...row,
+            symbol: normalizeSymbol(exactName.symbol, (exactName.market as EditableHoldingRow['market']) || inferMarket(exactName.symbol)),
+            name: exactName.name || nameQuery,
+            market: (exactName.market as EditableHoldingRow['market']) || inferMarket(exactName.symbol),
+            warnings: row.warnings.filter((item) => !item.includes('证券代码')),
+          }
+        }
+        return {
+          ...row,
+          symbol: '',
+          selected: false,
+          warnings: [...row.warnings.filter((item) => !item.includes('未能精确')), '代码与名称不一致，请手选'],
+        }
+      }
+    }
+    if (!nameQuery) {
+      return parsedCode
+        ? { ...row, symbol: normalizeSymbol(parsedCode.symbol, parsedCode.market), market: parsedCode.market }
+        : row
+    }
+    const nameHits = await searchStocks(nameQuery, '')
+    const exactName = pickUniqueNameHit(nameQuery, nameHits)
+    if (!exactName) {
+      return parsedCode
+        ? { ...row, symbol: normalizeSymbol(parsedCode.symbol, parsedCode.market), market: parsedCode.market }
+        : { ...row, selected: false, warnings: [...row.warnings.filter((item) => !item.includes('未能精确')), '未能精确匹配证券代码，请手选'] }
+    }
     return {
       ...row,
-      symbol: normalizeSymbol(exact.symbol, (exact.market as EditableHoldingRow['market']) || market),
-      name: exact.name || row.name,
-      market: (exact.market as EditableHoldingRow['market']) || market,
+      symbol: normalizeSymbol(exactName.symbol, (exactName.market as EditableHoldingRow['market']) || inferMarket(exactName.symbol)),
+      name: exactName.name || nameQuery,
+      market: (exactName.market as EditableHoldingRow['market']) || inferMarket(exactName.symbol),
+      warnings: row.warnings.filter((item) => !item.includes('证券代码')),
     }
   } catch {
-    return { ...row, symbol, market }
+    return parsedCode
+      ? { ...row, symbol: normalizeSymbol(parsedCode.symbol, parsedCode.market), market: parsedCode.market }
+      : row
   }
 }
 

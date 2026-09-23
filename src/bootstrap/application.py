@@ -13,6 +13,7 @@ from src.modules.administration.api import (
     channels,
     datasources,
     health,
+    llm_usage,
     logs,
     mcp,
     pats,
@@ -101,6 +102,9 @@ app.include_router(
 )
 app.include_router(
     logs.router, prefix="/api/logs", tags=["logs"], dependencies=protected
+)
+app.include_router(
+    llm_usage.router, prefix="/api/llm-usage", tags=["llm-usage"], dependencies=protected
 )
 app.include_router(
     history.router, prefix="/api", tags=["history"], dependencies=protected

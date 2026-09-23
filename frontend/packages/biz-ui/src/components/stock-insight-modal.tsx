@@ -17,6 +17,7 @@ import { Switch } from '@panwatch/base-ui/components/ui/switch'
 import { SuggestionBadge, type KlineSummary, type SuggestionInfo } from '@panwatch/biz-ui/components/suggestion-badge'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import InteractiveKline from '@panwatch/biz-ui/components/InteractiveKline'
+import { KlineSummaryDialog } from '@panwatch/biz-ui/components/kline-summary-dialog'
 import { KlineIndicators } from '@panwatch/biz-ui/components/kline-indicators'
 import { buildKlineSuggestion } from '@/lib/kline-scorer'
 import StockPriceAlertPanel from '@panwatch/biz-ui/components/stock-price-alert-panel'
@@ -374,7 +375,7 @@ export default function StockInsightModal(props: {
   const [deepShowDebate, setDeepShowDebate] = useState(false)
   const [deepHistory, setDeepHistory] = useState<HistoryComparisonResponse | null>(null)
   const [deepHistoryLoading, setDeepHistoryLoading] = useState(false)
-  const [klineInterval] = useState<'1d' | '1w' | '1m'>('1d')
+  const [summaryOpen, setSummaryOpen] = useState(false)
   const [alerting, setAlerting] = useState(false)
   const [watchingStock, setWatchingStock] = useState<StockItem | null>(null)
   const [watchToggleLoading, setWatchToggleLoading] = useState(false)
@@ -1287,7 +1288,7 @@ export default function StockInsightModal(props: {
                   <span className="break-all">{resolvedName}</span>
                   <span className="font-mono text-[12px] text-muted-foreground">({symbol})</span>
                 </DialogTitle>
-                <DialogDescription className="hidden md:block">概览、K线、AI建议、新闻、历史分析都在同一弹窗查看</DialogDescription>
+                <DialogDescription className="hidden md:block">概览、分时/K线、AI建议、新闻、历史分析都在同一弹窗查看</DialogDescription>
               </div>
               <div className="hidden md:flex items-center gap-2">
                 <Button variant="secondary" size="sm" className="h-8 px-2.5" onClick={() => handleExportShareImage()} disabled={imageExporting}>
@@ -1383,7 +1384,7 @@ export default function StockInsightModal(props: {
                 { id: 'suggestions', label: `建议 (${suggestions.length})` },
                 { id: 'reports', label: `报告 (${reports.length})` },
                 { id: 'deep', label: deepResult ? '深度 (1)' : '深度' },
-                { id: 'kline', label: 'K线' },
+                { id: 'kline', label: '分时/K线' },
                 { id: 'announcements', label: `公告 (${announcements.length})` },
                 { id: 'news', label: `新闻 (${news.length})` },
               ].map(item => (
@@ -1513,7 +1514,7 @@ export default function StockInsightModal(props: {
                               setMiniHoverIdx(Math.max(0, Math.min(miniKlines.length - 1, idx)))
                             }}
                           >
-                            <title>点击进入交互式K线</title>
+                            <title>点击查看当日分时</title>
                             {miniKlines.map((k, idx) => {
                               const xStep = 320 / miniKlines.length
                               const x = xStep * idx + xStep / 2
@@ -1659,10 +1660,16 @@ export default function StockInsightModal(props: {
 
             {tab === 'kline' && (
               <div className="card p-4">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="text-[12px] text-muted-foreground">当日实时分时，可切换日K / 周K / 月K</div>
+                  <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px]" onClick={() => setSummaryOpen(true)}>
+                    日K指标
+                  </Button>
+                </div>
                 <InteractiveKline
                   symbol={symbol}
                   market={market}
-                  initialInterval={klineInterval}
+                  initialInterval="trend"
                 />
               </div>
             )}
@@ -1895,7 +1902,15 @@ export default function StockInsightModal(props: {
           </div>
         </DialogContent>
       </Dialog>
-
+      <KlineSummaryDialog
+        open={summaryOpen}
+        onOpenChange={setSummaryOpen}
+        symbol={symbol}
+        market={market}
+        stockName={resolvedName}
+        hasPosition={!!props.hasPosition}
+        initialSummary={klineSummary}
+      />
     </>
   )
 }

@@ -400,12 +400,25 @@ DATA_SOURCE_SEEDS: list[dict] = [
             "test_symbols": ["601127", "600519", "300750"],
         },
         {
+            "name": "新浪K线",
+            "type": "kline",
+            "provider": "sina",
+            "config": {
+                "description": "新浪日K(CN/US,免 key)。腾讯失败后、东财之前的兜底;"
+                "东财 push2his 断连或 Stooq 超时时仍能出日K。",
+            },
+            "enabled": True,
+            "priority": 4,  # 腾讯(0)之后、东财(5)之前
+            "supports_batch": False,
+            "test_symbols": ["600719", "AAPL"],
+        },
+        {
             "name": "东方财富 K线",
             "type": "kline",
             "provider": "eastmoney",
             "config": {"description": "东方财富日线,A股/港股长历史兜底(免 key)。"},
             "enabled": True,
-            "priority": 5,   # 腾讯(0)之后、Tushare(10)之前 → CN/HK 兜底
+            "priority": 5,   # 腾讯(0)、新浪(4)之后 → CN/HK 兜底
             "supports_batch": False,
             "test_symbols": ["600519", "00700"],
         },
@@ -430,6 +443,61 @@ DATA_SOURCE_SEEDS: list[dict] = [
             },
             "enabled": False,  # 需代理,默认关(同 YFinance 口径),用户配好 proxy 再开
             "priority": 20,  # US/HK 最后兜底
+            "supports_batch": False,
+            "test_symbols": ["AAPL", "00700"],
+        },
+        # 当日分时。今早线上有曲线的是东财(priority 0),不是 Yahoo。
+        # Yahoo分时从 PR6 引入起就是 enabled=False;reconcile 只补缺失行,不会把已开启的行改回关。
+        {
+            "name": "东方财富分时",
+            "type": "trends",
+            "provider": "eastmoney",
+            "config": {
+                "description": "东方财富当日分时(CN/HK/US)。时间为市场本地钟面。"
+                "push2 502 时会再试 push2his(与日 K 同一主机)。",
+            },
+            "enabled": True,
+            "priority": 0,
+            "supports_batch": False,
+            "test_symbols": ["300409", "600519", "00700"],
+        },
+        {
+            "name": "腾讯分时",
+            "type": "trends",
+            "provider": "tencent",
+            "config": {"description": "腾讯当日分时,作 A 股/港股东财之后的第二源。不含美股分钟。"},
+            "enabled": True,
+            "priority": 5,
+            "supports_batch": False,
+            "test_symbols": ["300409", "600519", "00700"],
+        },
+        {
+            "name": "新浪美股分时",
+            "type": "trends",
+            "provider": "sina",
+            "config": {
+                "description": "新浪美股常规时段分时(US_MinlineNService,免 key)。"
+                "只服务 US,不会抢 A 股/港股的东财和腾讯。"
+                "排在东财之后:东财有数据时仍用东财(与今早线上一致);"
+                "东财空了再用这里。时间为美东 09:30–16:00,不含盘前盘后。",
+            },
+            "enabled": True,
+            "priority": 8,  # 腾讯(5)之后、Yahoo(20)之前。CN/HK 因 supports_markets 会直接跳过
+            "supports_batch": False,
+            "test_symbols": ["MRVL", "AAPL"],
+        },
+        {
+            "name": "Yahoo分时",
+            "type": "trends",
+            "provider": "yahoo",
+            "config": {
+                "description": "Yahoo 1 分钟分时(US/HK),includePrePost 含美股盘前盘后。"
+                "种子从引入起就是关。对账不会改已有行的 enabled;"
+                "若库里已经手动开过,重启不会把它关掉。需要盘前盘后时再开,proxy 留空则走系统代理。",
+                "proxy": "",
+            },
+            "enabled": False,
+            "priority": 20,
             "supports_batch": False,
             "test_symbols": ["AAPL", "00700"],
         },
@@ -1576,13 +1644,21 @@ if os.path.exists(static_dir):
     from fastapi.staticfiles import StaticFiles
     from fastapi.responses import FileResponse
 
-    # SPA 路由：所有非 API 请求返回 index.html
+    # SPA 路由：所有非 API 请求返回 index.html（html 禁止缓存，避免本地开发打到旧前端）
     @app.get("/{path:path}")
     async def serve_spa(path: str):
         file_path = os.path.join(static_dir, path)
+        nocache = {"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"}
         if os.path.isfile(file_path):
-            return FileResponse(file_path)
-        return FileResponse(os.path.join(static_dir, "index.html"))
+            resp = FileResponse(file_path)
+            if file_path.endswith(".html"):
+                for key, value in nocache.items():
+                    resp.headers[key] = value
+            return resp
+        resp = FileResponse(os.path.join(static_dir, "index.html"))
+        for key, value in nocache.items():
+            resp.headers[key] = value
+        return resp
 
     logger.info(f"静态文件服务已启用: {static_dir}")
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { commitHoldingImport, parseRowNumbers } from '@/lib/ocr/importHoldings'
+import { commitHoldingImport, enrichRowFromSearch, parseRowNumbers } from '@/lib/ocr/importHoldings'
 import type { EditableHoldingRow } from '@/lib/ocr/types'
 
 function row(partial: Partial<EditableHoldingRow> & Pick<EditableHoldingRow, 'symbol'>): EditableHoldingRow {
@@ -14,6 +14,74 @@ function row(partial: Partial<EditableHoldingRow> & Pick<EditableHoldingRow, 'sy
     warnings: partial.warnings || [],
   }
 }
+
+describe('enrichRowFromSearch', () => {
+  it('fills code by Chinese name when screenshot has no symbol', async () => {
+    const searchStocks = vi.fn(async () => [
+      { symbol: '603955', name: '浙江鼎业', market: 'CN' },
+    ])
+    const row = await enrichRowFromSearch(
+      {
+        id: '1',
+        selected: true,
+        symbol: '',
+        name: '浙江鼎业',
+        market: 'CN',
+        quantity: '700',
+        avgCost: '5.362',
+        warnings: ['未识别到证券代码，将按名称匹配'],
+      },
+      searchStocks,
+    )
+    expect(searchStocks).toHaveBeenCalledWith('浙江鼎业', '')
+    expect(row.symbol).toBe('603955')
+    expect(row.warnings).toEqual([])
+  })
+
+  it('does not overwrite OCR name with a mismatched code lookup', async () => {
+    const searchStocks = vi.fn(async (query: string) => {
+      if (query === '002172') return [{ symbol: '002172', name: '澳洋健康', market: 'CN' }]
+      if (query === '浙江鼎业') return [{ symbol: '603955', name: '浙江鼎业', market: 'CN' }]
+      return []
+    })
+    const row = await enrichRowFromSearch(
+      {
+        id: '2',
+        selected: true,
+        symbol: '002172',
+        name: '浙江鼎业',
+        market: 'CN',
+        quantity: '700',
+        avgCost: '5.362',
+        warnings: [],
+      },
+      searchStocks,
+    )
+    expect(row.symbol).toBe('603955')
+    expect(row.name).toBe('浙江鼎业')
+  })
+
+  it('repairs truncated OCR name 多多 to unique 多氟多', async () => {
+    const searchStocks = vi.fn(async () => [
+      { symbol: '002407', name: '多氟多', market: 'CN' },
+    ])
+    const row = await enrichRowFromSearch(
+      {
+        id: '3',
+        selected: false,
+        symbol: '',
+        name: '多多',
+        market: 'CN',
+        quantity: '100',
+        avgCost: '36.208',
+        warnings: ['未识别到证券代码，将按名称匹配'],
+      },
+      searchStocks,
+    )
+    expect(row.symbol).toBe('002407')
+    expect(row.name).toBe('多氟多')
+  })
+})
 
 describe('parseRowNumbers', () => {
   it('rejects missing quantity or cost', () => {

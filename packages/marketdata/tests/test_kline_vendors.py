@@ -3,6 +3,41 @@ from marketdata.symbol import Symbol
 from marketdata.types import Bar
 
 
+def test_tencent_kline_falls_back_when_primary_empty(monkeypatch):
+    js = 'kline_dayqfq={"data":{"sh600519":{"qfqday":[["2026-07-01","1","3","4","0.5","100"]]}}};'
+    calls = []
+
+    def fake(url, **k):
+        calls.append(url)
+        if "proxy.finance.qq.com" in url:
+            return js
+        return None
+
+    monkeypatch.setattr(kv, "market_get", fake)
+    out = kv.TencentKlineVendor().fetch([Symbol.parse("600519")], {"days": 60})
+    assert len(out) == 1 and out[0].close == 3.0
+    assert calls[0].startswith("https://web.ifzq.gtimg.cn/")
+    assert "proxy.finance.qq.com" in calls[1]
+
+
+def test_sina_cn_and_us_kline_parse(monkeypatch):
+    def fake(url, **k):
+        if "CN_MarketData" in url:
+            assert k["params"]["symbol"] == "sh600719"
+            return [{"day": "2026-09-23", "open": "8.030", "high": "8.030", "low": "7.530", "close": "7.590", "volume": "28451824"}]
+        return [
+            {"d": "2026-09-21", "o": "1", "h": "2", "l": "0.5", "c": "1.5", "v": "10"},
+            {"d": "2026-09-22", "o": "340.14", "h": "345.34", "l": "338.75", "c": "339.75", "v": "100"},
+        ]
+
+    monkeypatch.setattr(kv, "market_get", fake)
+    cn = kv.SinaKlineVendor().fetch([Symbol.parse("600719")], {"days": 60})
+    assert len(cn) == 1 and cn[0].date == "2026-09-23" and cn[0].close == 7.59
+    us = kv.SinaKlineVendor().fetch([Symbol.parse("AAPL", market="US")], {"days": 1})
+    assert len(us) == 1 and us[0].date == "2026-09-22" and us[0].close == 339.75
+    assert kv.SinaKlineVendor().fetch([Symbol.parse("00700", market="HK")], {"days": 30}) == []
+
+
 def test_tencent_kline_parses(monkeypatch):
     js = 'kline_dayqfq={"data":{"sh600519":{"day":[["2026-07-01","1","3","4","0.5","100"],["2026-07-02","3","5","6","2","200"]]}}};'
     monkeypatch.setattr(kv, "market_get", lambda *a, **k: js)

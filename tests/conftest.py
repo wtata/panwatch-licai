@@ -89,6 +89,14 @@ def _ensure_db_schema():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _disable_llm_usage_persist(request, monkeypatch):
+    """默认不把 mock LLM 调用写进真实库。用量用例自行打开。"""
+    if request.module and request.module.__name__.endswith("test_llm_usage"):
+        return
+    monkeypatch.setattr("src.platform.ai.usage_tracker.persist_enabled", False)
+
+
 # ---------------------------------------------------------------------------
 # 共用工厂 fixtures
 # ---------------------------------------------------------------------------

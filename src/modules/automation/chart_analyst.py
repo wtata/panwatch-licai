@@ -193,11 +193,14 @@ class ChartAnalystAgent(BaseAgent):
         else:
             # 调用多模态 AI
             logger.info(f"使用 {len(image_paths)} 张截图进行多模态分析")
-            content = await context.ai_client.chat(
-                system_prompt,
-                user_content,
-                images=image_paths,
-            )
+            from src.platform.ai.usage_tracker import llm_scene
+
+            with llm_scene(self.name):
+                content = await context.ai_client.chat(
+                    system_prompt,
+                    user_content,
+                    images=image_paths,
+                )
 
         # 构建标题
         stock_names = "、".join(s.name for s in context.watchlist[:5])
