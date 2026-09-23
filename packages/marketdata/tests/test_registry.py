@@ -13,7 +13,7 @@ def test_package_vendors_by_type_content():
     assert PACKAGE_VENDORS_BY_TYPE == {
         "quote": frozenset({"tencent", "sina", "eastmoney", "yfinance"}),
         "kline": frozenset({"tencent", "stooq", "eastmoney", "sina", "yahoo"}),
-        "trends": frozenset({"eastmoney", "tencent", "yahoo"}),
+        "trends": frozenset({"eastmoney", "tencent", "sina", "yahoo"}),
         "capital_flow": frozenset({"eastmoney", "sina"}),
         "events": frozenset({"eastmoney"}),
         "flash_news": frozenset({"cls", "sina", "eastmoney"}),

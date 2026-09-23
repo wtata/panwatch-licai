@@ -28,6 +28,7 @@ type TrendsResponse = {
   date?: string
   prev_close?: number | null
   source?: string
+  hint?: string
   points?: TrendPoint[]
 }
 
@@ -67,6 +68,7 @@ export default function TimeshareChart(props: {
   const [points, setPoints] = useState<TrendPoint[]>([])
   const [prevClose, setPrevClose] = useState<number | null>(null)
   const [clockZone, setClockZone] = useState(() => initialIntradayClock(props.market))
+  const [hint, setHint] = useState('')
   const [hover, setHover] = useState<{ x: number; y: number; point: TrendPoint } | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const requestRef = useRef(0)
@@ -97,6 +99,7 @@ export default function TimeshareChart(props: {
         })
       }
       setPoints([...byTs.values()].sort((a, b) => a.ts - b.ts))
+      setHint(String(res.hint || ''))
       setPrevClose(res.prev_close == null || Number.isNaN(Number(res.prev_close)) ? null : Number(res.prev_close))
       // 美股时区由用户切换决定，刷新不能把它打回接口里的美东。
       if (String(props.market || '').toUpperCase() !== 'US') {
@@ -105,6 +108,7 @@ export default function TimeshareChart(props: {
     } catch (e) {
       if (reqId !== requestRef.current) return
       setError(e instanceof Error ? e.message : '加载当日分时失败')
+      setHint('')
       setPoints([])
     } finally {
       if (reqId === requestRef.current) setLoading(false)
@@ -347,8 +351,8 @@ export default function TimeshareChart(props: {
         {loading && points.length === 0 ? (
           <div className="w-full h-[360px] rounded-xl overflow-hidden border border-border/50 animate-pulse bg-accent/20" />
         ) : points.length === 0 ? (
-          <div className="w-full h-[220px] rounded-xl border border-border/50 flex items-center justify-center text-[12px] text-muted-foreground">
-            暂无当日分时
+          <div className="w-full min-h-[220px] rounded-xl border border-border/50 flex items-center justify-center text-center text-[12px] text-muted-foreground px-6 py-8 leading-relaxed">
+            {hint || (isUs ? '暂无美股当日分时' : '暂无当日分时')}
           </div>
         ) : (
           <div ref={containerRef} className="w-full h-[360px] rounded-xl overflow-hidden border border-border/50" />

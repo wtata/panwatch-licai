@@ -124,7 +124,8 @@ class SourceConfig:
 | type | 返回 dataclass | 已实现 vendor(provider 名) | 覆盖市场 | 粒度 |
 |---|---|---|---|---|
 | `quote` | `Quote` | `tencent` / `sina` / `eastmoney` / `yfinance` | tencent: CN+HK+US;sina: US+HK;eastmoney: CN;yfinance: HK+US(可选依赖) | 按 symbol |
-| `kline` | `Bar` | `tencent` / `stooq` / `eastmoney` / `yahoo` | tencent: CN+HK+US;eastmoney: CN+HK;stooq: US;yahoo: US+HK | 按 symbol |
+| `kline` | `Bar` | `tencent` / `stooq` / `eastmoney` / `sina` / `yahoo` | tencent: CN+HK+US;eastmoney: CN+HK;sina: CN+US;stooq: US;yahoo: US+HK | 按 symbol |
+| `trends` | `TrendPoint` | `eastmoney` / `tencent` / `sina` / `yahoo` | eastmoney: CN+HK+US;tencent: CN+HK;sina: US 常规时段;yahoo: US+HK(含盘前盘后,国内通常要代理) | 按 symbol |
 | `capital_flow` | `CapitalFlow` | `eastmoney` / `sina` | eastmoney: CN+HK+US;sina: CN | 按 symbol |
 | `events` | `EventItem` | `eastmoney` | CN | 按 symbol |
 | `flash_news` | `FlashNews` | `cls` / `sina` / `eastmoney` | 均 CN | **市场级**(symbols 恒空) |

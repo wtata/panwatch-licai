@@ -446,7 +446,8 @@ DATA_SOURCE_SEEDS: list[dict] = [
             "supports_batch": False,
             "test_symbols": ["AAPL", "00700"],
         },
-        # 当日分时(价格/均价/成交量)。Yahoo 默认关:国内通常要代理,打开后美股含盘前盘后。
+        # 当日分时(价格/均价/成交量)。美股常规时段走新浪(免代理)。
+        # Yahoo 默认关:国内通常要代理,只补盘前盘后。
         {
             "name": "东方财富分时",
             "type": "trends",
@@ -461,11 +462,26 @@ DATA_SOURCE_SEEDS: list[dict] = [
             "name": "腾讯分时",
             "type": "trends",
             "provider": "tencent",
-            "config": {"description": "腾讯当日分时,作 A 股/港股东财之后的第二源。"},
+            "config": {"description": "腾讯当日分时,作 A 股/港股东财之后的第二源。不含美股分钟。"},
             "enabled": True,
             "priority": 5,
             "supports_batch": False,
             "test_symbols": ["300409", "600519", "00700"],
+        },
+        {
+            "name": "新浪美股分时",
+            "type": "trends",
+            "provider": "sina",
+            "config": {
+                "description": "新浪美股常规时段分时(US_MinlineNService,免 key 免代理)。"
+                "只服务 US,不会抢 A 股/港股的东财和腾讯。"
+                "国内 ECS 上东财分时常断连、腾讯 minute 不含美股分钟,所以本源优先级高于东财,"
+                "避免美股分时先空等东财超时。时间为美东 09:30–16:00,不含盘前盘后。",
+            },
+            "enabled": True,
+            "priority": -1,  # 仅 US;排在东财(0)之前。CN/HK 因 supports_markets 会直接跳过
+            "supports_batch": False,
+            "test_symbols": ["MRVL", "AAPL"],
         },
         {
             "name": "Yahoo分时",
@@ -473,7 +489,8 @@ DATA_SOURCE_SEEDS: list[dict] = [
             "provider": "yahoo",
             "config": {
                 "description": "Yahoo 1 分钟分时(US/HK),includePrePost 含美股盘前盘后。"
-                "国内访问通常需代理,在 config.proxy 填写后启用。",
+                "美股常规时段已由新浪分时覆盖,不必为了看见当日分时而打开本源。"
+                "国内访问 Yahoo 通常需代理,只在需要盘前盘后、且 config.proxy 已填写时再启用。",
                 "proxy": "",
             },
             "enabled": False,

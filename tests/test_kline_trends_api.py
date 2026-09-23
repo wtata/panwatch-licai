@@ -48,3 +48,33 @@ def test_get_trends_serializes_shanghai_points(monkeypatch):
     assert payload["points"][0]["price"] == 10.2
     assert payload["points"][0]["avg"] == 10.1
     assert payload["points"][0]["volume"] == 100
+    assert payload["hint"] == ""
+
+
+def test_us_trends_empty_explains_sina_path(monkeypatch):
+    class _Md:
+        def trends(self, symbol, market):
+            assert symbol == "MRVL"
+            assert market == "US"
+            return []
+
+    import src.platform.marketdata.collectors.kline_collector as kc
+
+    monkeypatch.setattr(kc, "get_market_data", lambda: _Md())
+    payload = api.get_trends("MRVL", market="US")
+    assert payload["points"] == []
+    assert payload["timezone"] == "America/New_York"
+    assert "新浪美股分时" in payload["hint"]
+    assert "Yahoo" in payload["hint"]
+
+
+def test_cn_trends_empty_has_no_us_hint(monkeypatch):
+    class _Md:
+        def trends(self, symbol, market):
+            return []
+
+    import src.platform.marketdata.collectors.kline_collector as kc
+
+    monkeypatch.setattr(kc, "get_market_data", lambda: _Md())
+    payload = api.get_trends("600519", market="CN")
+    assert payload["hint"] == ""

@@ -143,6 +143,11 @@ def get_klines_batch(payload: KlineBatchRequest):
 
 
 _TRENDS_TZ = {"CN": "Asia/Shanghai", "HK": "Asia/Shanghai", "US": "America/New_York"}
+_US_TRENDS_EMPTY_HINT = (
+    "暂无美股当日分时。常规交易时段由新浪提供（免代理，约 09:30–16:00 美东）；"
+    "若重启后仍为空，请到数据源确认「新浪美股分时」已启用。"
+    "盘前盘后不在这条曲线里，需要时再启用 Yahoo 分时并填写代理。"
+)
 
 
 @router.get("/{symbol}/trends")
@@ -170,6 +175,7 @@ def get_trends(symbol: str, market: str = "CN"):
         "date": points[-1]["time"][:10] if points else "",
         "prev_close": getattr(bars, "prev_close", None),
         "source": getattr(bars, "vendor", "") or "",
+        "hint": _US_TRENDS_EMPTY_HINT if (not points and market_code.value == "US") else "",
         "points": points,
     }
 
