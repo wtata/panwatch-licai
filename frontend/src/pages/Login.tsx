@@ -53,6 +53,14 @@ export default function LoginPage() {
       localStorage.setItem('token', data.token)
       localStorage.setItem('token_expires', data.expires_at)
 
+      if (data.must_change_password) {
+        localStorage.setItem('must_change_password', '1')
+        toast('请先修改初始密码', 'info')
+        navigate('/change-password')
+        return
+      }
+
+      localStorage.removeItem('must_change_password')
       toast(isSetup ? '密码设置成功' : '登录成功', 'success')
       navigate('/')
     } catch (e) {

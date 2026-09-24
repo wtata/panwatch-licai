@@ -7,6 +7,12 @@ export interface AuthStatus {
 export interface AuthTokenPayload {
   token: string
   expires_at: string
+  must_change_password?: boolean
+}
+
+export interface AuthMe {
+  user: string
+  must_change_password: boolean
 }
 
 export interface LoginPayload {
@@ -25,5 +31,11 @@ export const authApi = {
     fetchAPI<AuthTokenPayload>('/auth/setup', {
       method: 'POST',
       body: JSON.stringify(payload),
+    }),
+  me: () => fetchAPI<AuthMe>('/auth/me'),
+  changePassword: (password: string) =>
+    fetchAPI<{ message: string; must_change_password: boolean }>('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ password }),
     }),
 }

@@ -2029,6 +2029,49 @@ def _m128_llm_usage_records(conn: Connection) -> None:
     )
 
 
+def _m130_auth_must_change_password(conn: Connection) -> None:
+    """已有管理员账号补「是否必须改密」标记，只写一次。
+
+    没有密码哈希时不动，等环境变量首次建号再标记必须修改。
+    已有密码时：当前 AUTH_PASSWORD 的哈希与库存一致视为仍在用初始密码；
+    否则（含未配置 AUTH_PASSWORD）视为已经改过，不强制，避免误伤现有部署。
+    """
+    if not _has_table(conn, "app_settings"):
+        return
+    existing = conn.execute(
+        text(
+            "SELECT value FROM app_settings WHERE key = 'auth_must_change_password' LIMIT 1"
+        )
+    ).first()
+    if existing:
+        return
+    row = conn.execute(
+        text("SELECT value FROM app_settings WHERE key = 'auth_password_hash' LIMIT 1")
+    ).first()
+    if not row or not row[0]:
+        return
+
+    import os
+
+    from src.platform.security.password_hash import hash_password
+
+    env_password = os.environ.get("AUTH_PASSWORD") or ""
+    stored = str(row[0])
+    flag = "1" if env_password and hash_password(env_password) == stored else "0"
+    conn.execute(
+        text(
+            """
+INSERT INTO app_settings (key, value, description)
+VALUES ('auth_must_change_password', :value, :description)
+"""
+        ),
+        {
+            "value": flag,
+            "description": "内置管理员是否仍需修改初始密码（1=需要）",
+        },
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(101, "agent_config_kind_and_visibility", _m101_agent_config_kind),
     Migration(102, "backfill_agent_kind_data", _m102_backfill_agent_kind),
@@ -2057,6 +2100,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(127, "discipline_journal_and_rules", _m127_discipline_tables),
     Migration(128, "llm_usage_records", _m128_llm_usage_records),
     Migration(129, "portfolio_trades", _m129_portfolio_trades),
+    Migration(130, "auth_must_change_password", _m130_auth_must_change_password),
 )
 
 

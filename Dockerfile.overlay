@@ -30,4 +30,10 @@ COPY src/modules/licai /app/src/modules/licai
 COPY src/bootstrap/application.py /app/src/bootstrap/application.py
 COPY src/platform/persistence/models.py /app/src/platform/persistence/models.py
 COPY src/platform/persistence/migrations.py /app/src/platform/persistence/migrations.py
+COPY src/platform/observability/health.py /app/src/platform/observability/health.py
+COPY src/platform/security/__init__.py /app/src/platform/security/__init__.py
+COPY src/platform/security/password_hash.py /app/src/platform/security/password_hash.py
+COPY src/modules/administration/password_policy.py /app/src/modules/administration/password_policy.py
+COPY src/modules/administration/api/auth.py /app/src/modules/administration/api/auth.py
+COPY VERSION /app/VERSION
 COPY --from=frontend-builder /app/frontend/dist /app/static

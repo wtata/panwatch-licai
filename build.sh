@@ -7,9 +7,20 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# 默认值
-VERSION=${1:-"latest"}
+# 未传参时用仓库根目录 VERSION。镜像标签可以用 latest，但不要把文件内容写成 latest。
+REQUESTED_VERSION="${1:-}"
+if [ -n "$REQUESTED_VERSION" ]; then
+    VERSION="$REQUESTED_VERSION"
+else
+    VERSION="$(tr -d '[:space:]' < VERSION)"
+fi
 IMAGE_NAME="sunxiao0721/panwatch"
+BUILD_ARGS=()
+case "$VERSION" in
+    v[0-9]*.[0-9]*.[0-9]*|[0-9]*.[0-9]*.[0-9]*)
+        BUILD_ARGS+=(--build-arg "VERSION=${VERSION}")
+        ;;
+esac
 
 echo -e "${GREEN}🚀 PanWatch 构建脚本${NC}"
 echo -e "版本: ${YELLOW}${VERSION}${NC}"
@@ -37,7 +48,7 @@ cp -r frontend/dist/* static/
 echo -e "${GREEN}🐳 构建 Docker 镜像 (linux/amd64)...${NC}"
 FULL_IMAGE="${IMAGE_NAME}:${VERSION}"
 
-docker build --platform linux/amd64 --build-arg VERSION="${VERSION}" -t "${FULL_IMAGE}" .
+docker build --platform linux/amd64 "${BUILD_ARGS[@]}" -t "${FULL_IMAGE}" .
 
 # 如果版本不是 latest，也打 latest 标签
 if [ "$VERSION" != "latest" ]; then
@@ -54,7 +65,7 @@ echo ""
 echo -e "${GREEN}🎉 构建完成！${NC}"
 echo ""
 echo "运行容器:"
-echo -e "  ${YELLOW}docker run -d -p 8000:8000 -v panwatch_data:/app/data ${FULL_IMAGE}${NC}"
+echo -e "  ${YELLOW}docker run -d --name panwatch -p 8000:8000 -v panwatch_data:/app/data -v ./logs:/app/logs -e LOG_DIR=/app/logs ${FULL_IMAGE}${NC}"
 echo ""
 echo "推送镜像:"
 echo -e "  ${YELLOW}docker push ${FULL_IMAGE}${NC}"

@@ -1,6 +1,9 @@
 const API_BASE = '/api'
 const DEFAULT_TIMEOUT_MS = 20000
 
+/** 与后端 PASSWORD_CHANGE_REQUIRED_CODE 一致：必须先改初始密码。 */
+export const PASSWORD_CHANGE_REQUIRED_CODE = 4031
+
 interface ApiResponse<T> {
   code: number
   success?: boolean
@@ -15,6 +18,7 @@ export function getToken(): string | null {
 export function logout() {
   localStorage.removeItem('token')
   localStorage.removeItem('token_expires')
+  localStorage.removeItem('must_change_password')
   window.location.href = '/login'
 }
 
@@ -86,6 +90,13 @@ export async function fetchAPI<T>(path: string, options?: ApiRequestOptions): Pr
     data: null as T,
     message: `HTTP ${res.status}`,
   }))
+  if (body.code === PASSWORD_CHANGE_REQUIRED_CODE) {
+    localStorage.setItem('must_change_password', '1')
+    if (window.location.pathname !== '/change-password') {
+      window.location.assign('/change-password')
+    }
+    throw new Error(body.message || '请先修改初始密码')
+  }
   if (body.code !== 0 || body.success === false) {
     throw new Error(body.message || `HTTP ${res.status}`)
   }

@@ -19,6 +19,7 @@ from src.platform.persistence.models import (
     AppSettings,
     DataSource,
 )
+from src.platform.observability.daily_log import DailyFileLogHandler, attach_daily_file_handler
 from src.platform.observability.log_handler import DBLogHandler
 from src.platform.runtime.config import Settings, AppConfig, StockConfig
 from src.platform.marketdata.models import MarketCode
@@ -138,11 +139,12 @@ def setup_ssl():
 
 
 def setup_logging():
-    """配置日志: 控制台 + 数据库
+    """配置日志: 控制台 + 数据库 + 按天文件
 
     分级策略:
     - root logger 始终 DEBUG,所有日志都会传播到 handler
     - 控制台 handler 按 LOG_LEVEL 过滤(默认 INFO),并丢弃 httpx 等三方库的 < WARNING 噪音
+    - 文件 handler 与控制台同级,写到 LOG_DIR（默认 logs/panwatch-YYYY-MM-DD.log）
     - DB handler 始终 DEBUG 全量收录,UI 日志板永远可以看到包括心跳/httpx 请求在内的完整记录
     """
     console_level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -154,7 +156,11 @@ def setup_logging():
 
     # reload/server restart 时避免重复 handler 导致日志放大。
     for h in list(root.handlers):
-        if isinstance(h, DBLogHandler) or getattr(h, "_panwatch_console", False):
+        if (
+            isinstance(h, (DBLogHandler, DailyFileLogHandler))
+            or getattr(h, "_panwatch_console", False)
+            or getattr(h, "_panwatch_file", False)
+        ):
             root.removeHandler(h)
             try:
                 h.close()
@@ -172,6 +178,10 @@ def setup_logging():
         )
     )
     root.addHandler(console)
+
+    # 按天文件: 与控制台同级,目录默认 logs/（容器里挂到 /app/logs）
+    file_handler = attach_daily_file_handler(root, console_level)
+    file_handler.addFilter(_ConsoleNoiseFilter())
 
     # 数据库持久化: 始终全量收录,UI 日志板可查 DEBUG
     db_handler = DBLogHandler(level=logging.DEBUG)
@@ -1645,6 +1655,7 @@ if os.path.exists(static_dir):
     from fastapi.responses import FileResponse
 
     # SPA 路由：所有非 API 请求返回 index.html（html 禁止缓存，避免本地开发打到旧前端）
+    # /health 已在 application.py 注册，位于本 catch-all 之前，不会被 index.html 吃掉。
     @app.get("/{path:path}")
     async def serve_spa(path: str):
         file_path = os.path.join(static_dir, path)

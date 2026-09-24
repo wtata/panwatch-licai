@@ -1,6 +1,5 @@
 """认证 API - 简单的单用户 JWT 认证"""
 import os
-import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -11,6 +10,14 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import jwt
 
+from src.platform.security.password_hash import hash_password
+from src.modules.administration.password_policy import (
+    PASSWORD_CHANGE_REQUIRED_CODE,
+    PASSWORD_CHANGE_REQUIRED_MESSAGE,
+    ensure_password_change_flag,
+    is_password_change_required,
+    set_password_change_required,
+)
 from src.platform.persistence.database import get_db, SessionLocal
 from src.platform.persistence.models import AppSettings
 
@@ -20,10 +27,6 @@ security = HTTPBearer(auto_error=False)
 # JWT 配置
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_DAYS = 30
-
-# 环境变量配置（Docker 部署用）
-ENV_AUTH_USERNAME = os.getenv("AUTH_USERNAME")
-ENV_AUTH_PASSWORD = os.getenv("AUTH_PASSWORD")
 
 # 设置项 key
 AUTH_USERNAME_KEY = "auth_username"
@@ -73,11 +76,12 @@ class SetupRequest(BaseModel):
 class TokenResponse(BaseModel):
     token: str
     expires_at: str
+    must_change_password: bool = False
 
 
-def hash_password(password: str) -> str:
-    """简单的密码哈希"""
-    return hashlib.sha256(password.encode()).hexdigest()
+class ChangePasswordRequest(BaseModel):
+    password: str
+    username: str | None = None
 
 
 def create_token(expires_days: int = JWT_EXPIRE_DAYS) -> tuple[str, datetime]:
@@ -141,34 +145,37 @@ def set_password_hash(db: Session, password_hash: str):
 def init_auth_from_env(db: Session) -> bool:
     """从环境变量初始化认证（Docker 部署用）
 
+    已有账号不覆盖密码，只在缺少「必须改密」标记时补一次。
+    新账号用环境变量里的初始密码创建，并标记首次登录必须修改。
+
     Returns:
         True if initialized from env, False otherwise
     """
-    if not ENV_AUTH_USERNAME or not ENV_AUTH_PASSWORD:
+    existing_hash = get_password_hash(db)
+    if existing_hash:
+        ensure_password_change_flag(db, existing_hash)
         return False
 
-    # 如果已有账号，不覆盖
-    if get_password_hash(db):
+    username = os.getenv("AUTH_USERNAME")
+    password = os.getenv("AUTH_PASSWORD")
+    if not username or not password:
         return False
 
-    # 从环境变量创建账号
-    set_stored_username(db, ENV_AUTH_USERNAME)
-    set_password_hash(db, hash_password(ENV_AUTH_PASSWORD))
+    set_stored_username(db, username)
+    set_password_hash(db, hash_password(password))
+    set_password_change_required(db, True)
     return True
 
 
-async def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-    db: Session = Depends(get_db),
+def _resolve_user(
+    credentials: Optional[HTTPAuthorizationCredentials],
+    db: Session,
 ):
-    """验证当前用户（用作依赖）"""
-    # 检查是否已设置密码
+    """校验登录态。未设置密码时返回 None（初始状态允许访问）。"""
     password_hash = get_password_hash(db)
     if not password_hash:
-        # 未设置密码，允许访问（初始状态）
         return None
 
-    # 已设置密码，需要验证 token
     if not credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -184,6 +191,36 @@ async def get_current_user(
         )
 
     return "user"
+
+
+def _reject_if_password_change_required(db: Session) -> None:
+    if is_password_change_required(db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": PASSWORD_CHANGE_REQUIRED_CODE,
+                "message": PASSWORD_CHANGE_REQUIRED_MESSAGE,
+            },
+        )
+
+
+async def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    db: Session = Depends(get_db),
+):
+    """验证当前用户（用作依赖）。仍在使用初始密码时拒绝访问业务接口。"""
+    user = _resolve_user(credentials, db)
+    if user is not None:
+        _reject_if_password_change_required(db)
+    return user
+
+
+async def get_current_user_allow_password_change(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    db: Session = Depends(get_db),
+):
+    """登录态校验，但允许「必须改密」状态下调用改密和读取当前用户。"""
+    return _resolve_user(credentials, db)
 
 
 @router.get("/status")
@@ -210,9 +247,15 @@ async def setup_password(data: SetupRequest, db: Session = Depends(get_db)):
     set_stored_username(db, data.username)
     password_hash = hash_password(data.password)
     set_password_hash(db, password_hash)
+    # 用户在界面上自己设的密码，不是环境变量初始密码。
+    set_password_change_required(db, False)
 
     token, expires_at = create_token()
-    return TokenResponse(token=token, expires_at=expires_at.isoformat())
+    return TokenResponse(
+        token=token,
+        expires_at=expires_at.isoformat(),
+        must_change_password=False,
+    )
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -230,26 +273,49 @@ async def login(data: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(401, "用户名或密码错误")
 
     token, expires_at = create_token()
-    return TokenResponse(token=token, expires_at=expires_at.isoformat())
+    must_change = is_password_change_required(db)
+    return TokenResponse(
+        token=token,
+        expires_at=expires_at.isoformat(),
+        must_change_password=must_change,
+    )
 
 
 @router.post("/change-password")
 async def change_password(
-    data: SetupRequest,
+    data: ChangePasswordRequest,
     db: Session = Depends(get_db),
-    _: str = Depends(get_current_user),
+    _: str = Depends(get_current_user_allow_password_change),
 ):
-    """修改密码"""
+    """修改密码。改完后清除「必须修改初始密码」标记。"""
+    if _ is None:
+        raise HTTPException(401, "未登录")
+
     if len(data.password) < 6:
         raise HTTPException(400, "密码长度至少 6 位")
 
-    password_hash = hash_password(data.password)
-    set_password_hash(db, password_hash)
+    env_password = os.getenv("AUTH_PASSWORD") or ""
+    if env_password and data.password == env_password:
+        raise HTTPException(400, "新密码不能与初始密码相同")
 
-    return {"message": "密码已更新"}
+    stored_hash = get_password_hash(db)
+    password_hash = hash_password(data.password)
+    if stored_hash and password_hash == stored_hash:
+        raise HTTPException(400, "新密码不能与当前密码相同")
+
+    set_password_hash(db, password_hash)
+    set_password_change_required(db, False)
+
+    return {"message": "密码已更新", "must_change_password": False}
 
 
 @router.get("/me")
-async def get_me(user: str = Depends(get_current_user)):
-    """获取当前用户信息"""
-    return {"user": user or "guest"}
+async def get_me(
+    user: str = Depends(get_current_user_allow_password_change),
+    db: Session = Depends(get_db),
+):
+    """获取当前用户信息。必须改密时仍可调用，供前端决定是否跳转。"""
+    return {
+        "user": user or "guest",
+        "must_change_password": is_password_change_required(db) if user else False,
+    }
