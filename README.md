@@ -8,6 +8,52 @@
 [![Last commit](https://img.shields.io/github/last-commit/TNT-Likely/PanWatch)](https://github.com/TNT-Likely/PanWatch/commits/main)
 [![PWA](https://img.shields.io/badge/PWA-installable-5A0FC8?logo=pwa&logoColor=white)](https://github.com/TNT-Likely/PanWatch)
 
+## 使用说明
+
+股视盯是自托管的盯盘助手：看持仓、记买卖、做纪律和学习记录，行情和提醒都留在自己的机器上。
+
+- **线上地址**：http://182.92.143.113/
+- **端口**：8000（本机和容器内都是这个端口）
+- **依赖**：Docker。本地开发另需 Python 3.11（见 `.python-version`）和 Node.js 24.14.0（见 `.nvmrc`，包管理用 pnpm 9.15.9）
+- **日志**：本地在项目 `logs/panwatch-YYYY-MM-DD.log`，默认保留 30 天。目录用 `LOG_DIR` 调整，保留天数用 `LOG_RETENTION_DAYS` 调整。线上把宿主机目录挂进容器，例如 `-v ./logs:/app/logs`，容器内路径是 `/app/logs`
+- **版本号**：只维护根目录 `VERSION`（当前 `0.14.0`）。`/health`、`/api/health` 和页面上的版本都读它
+
+### 启动命令
+
+容器已经创建好时，只需要这一条：
+
+```bash
+docker start panwatch
+```
+
+### 安装（首次创建容器）
+
+```bash
+docker run -d \
+  --name panwatch \
+  --restart unless-stopped \
+  -p 8000:8000 \
+  -v panwatch_data:/app/data \
+  -v ./logs:/app/logs \
+  -e LOG_DIR=/app/logs \
+  -e AUTH_USERNAME=admin \
+  -e AUTH_PASSWORD=请替换为初始密码 \
+  panwatch:local
+```
+
+浏览器打开 `http://localhost:8000`。用环境变量里的初始账号登录后，需要先修改密码才能使用其他功能。账号和初始密码只放在环境变量或服务器上的 env 文件里，不要写进仓库。
+
+服务器上重新构建并替换容器，用仓库根目录的 `./deploy.sh`（用法和所需环境变量写在脚本开头）。日常启动用上面的 `docker start panwatch`，不要每次都走部署脚本。
+
+### 开发
+
+```bash
+make dev-api   # 后端 :8000
+make dev-web   # 前端 :5183，把 /api 代理到 127.0.0.1:8000
+```
+
+环境准备和手动启动见下方「本地开发」。
+
 ![股视盯 PanWatch · TradingAgents 深度分析演示](docs/screenshots/tradingagents-demo.gif)
 
 > 🧠 **持仓页点一下 → TradingAgents 9-Agent 投研团队接力分析 → 看多看空辩论 → 风控审查 → PM 决策书,3-5 分钟一条完整推理链,结论直推到你的 IM。**
@@ -105,6 +151,8 @@ docker run -d \
   --name panwatch \
   -p 8000:8000 \
   -v panwatch_data:/app/data \
+  -v ./logs:/app/logs \
+  -e LOG_DIR=/app/logs \
   sunxiao0721/panwatch:latest
 ```
 
@@ -129,6 +177,9 @@ services:
       - "8000:8000"
     volumes:
       - panwatch_data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - LOG_DIR=/app/logs
     restart: unless-stopped
 
 volumes:
@@ -152,7 +203,9 @@ docker-compose up -d
 | `DATA_DIR` | 数据存储目录 | `./data` |
 | `TZ` | 应用时区（影响 Agent 调度触发时间与时间展示） | `Asia/Shanghai` |
 | `PLAYWRIGHT_SKIP_BROWSER_INSTALL` | 跳过首次 Chromium 安装（不需要截图时可用） | 未设置 |
-| `LOG_LEVEL` | 控制台日志级别。默认 `INFO`（只输出业务事件 + 错误）；排查问题时设 `DEBUG` 可看到调度心跳、采集过程等底层日志。UI 日志板始终保留完整记录，不受影响 | `INFO` |
+| `LOG_LEVEL` | 控制台日志级别。默认 `INFO`（只输出业务事件 + 错误）；排查问题时设 `DEBUG` 可看到调度心跳、采集过程等底层日志。UI 日志板始终保留完整记录，不受影响。按天文件日志与控制台同级 | `INFO` |
+| `LOG_DIR` | 按天日志目录，文件名 `panwatch-YYYY-MM-DD.log` | `logs`（容器内建议 `/app/logs`） |
+| `LOG_RETENTION_DAYS` | 日志文件保留天数 | `30` |
 | `HTTP_PROXY` / `HTTPS_PROXY` / `http_proxy` | 出站 HTTP 代理。三种配置方式任选其一: ① 启动前 `export HTTP_PROXY=...`；② `.env` 里写 `http_proxy=http://host:port`；③ UI「设置 → 全局 HTTP 代理」。三者优先级:外部环境变量 > UI > `.env`。生效后所有 httpx 客户端走代理。`NO_PROXY` 默认包含 `localhost,127.0.0.1` | 未设置 |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OpenTelemetry OTLP 导出端点(如 `http://jaeger:4318`)。**配置后**才启用 OTel trace 导出;留空则完全关闭(零副作用)。还需安装可选依赖 `requirements-otel.txt`。详见下方「OTel 导出」 | 未设置(关闭) |
 
@@ -171,7 +224,7 @@ docker-compose up -d
 <details>
 <summary>本地开发</summary>
 
-**环境要求**：Python 3.10+ / Node.js 18+ / pnpm
+**环境要求**：Python 3.11（见 `.python-version`）/ Node.js 24.14.0（见 `.nvmrc`）/ pnpm 9.15.9
 
 ```bash
 # 一键开发（推荐）

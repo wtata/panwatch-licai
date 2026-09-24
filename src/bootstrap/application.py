@@ -7,6 +7,7 @@ HTTP 中间件、认证依赖和各模块 router；具体业务规则仍由 ``mo
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from src.modules.administration.api import (
     auth,
@@ -40,11 +41,12 @@ from src.modules.research.api import context, evaluations, feedback, insights, r
 from src.modules.strategy.api import factors
 from src.modules.administration.api.auth import get_current_user
 from src.modules.administration.api.settings import get_app_version
+from src.platform.observability.health import build_health_payload
 from src.web.response import ResponseWrapperMiddleware
 
 app = FastAPI(
     title="PanWatch API",
-    version="0.1.0",
+    version=get_app_version(),
     redirect_slashes=False,  # 避免重定向丢失 Authorization header
 )
 
@@ -235,9 +237,18 @@ def oauth_protected_resource_metadata(request: Request, _resource_path: str = ""
     }
 
 
+@app.get("/health")
+async def service_health():
+    """工具箱健康检查。不在 /api 下，因此不会被响应包装，也不会被后面的 SPA 吃掉。"""
+    payload = build_health_payload(get_app_version())
+    if payload.get("status") != "ok":
+        return JSONResponse(status_code=503, content=payload)
+    return payload
+
+
 @app.get("/api/health")
 async def health():
-    return {"status": "ok"}
+    return build_health_payload(get_app_version())
 
 
 @app.get("/api/version")
