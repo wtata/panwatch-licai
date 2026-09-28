@@ -133,12 +133,17 @@ export default function OverviewPage() {
 
   const byWeight = useMemo(
     () =>
-      positions.map((p) => ({
-        ...p,
-        weight: investedMv > 0 ? (p.marketValueCny / investedMv) * 100 : 0,
-      })),
+      positions
+        .map((p) => ({
+          ...p,
+          weight: investedMv > 0 ? (p.marketValueCny / investedMv) * 100 : 0,
+        }))
+        .sort((a, b) => b.marketValueCny - a.marketValueCny || a.symbol.localeCompare(b.symbol)),
     [positions, investedMv],
   )
+  const weightPreview = byWeight.slice(0, 8)
+  const weightRest = byWeight.slice(8)
+  const weightRestPct = weightRest.reduce((sum, row) => sum + row.weight, 0)
 
   const pie = useMemo(() => {
     const buckets: Record<string, number> = { CN: 0, HK: 0, US: 0 }
@@ -215,7 +220,7 @@ export default function OverviewPage() {
         <p className="text-[12px] text-muted-foreground">部分标的无行情，市值暂按成本估算。</p>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
         <div className="card">
           <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
             <h2 className="text-[14px] font-semibold">市场配置</h2>
@@ -265,7 +270,7 @@ export default function OverviewPage() {
             </div>
           ) : (
             <div className="space-y-3 px-4 py-4">
-              {byWeight.map((row) => (
+              {weightPreview.map((row) => (
                 <div key={row.id}>
                   <div className="mb-1 flex items-center justify-between gap-2 text-[13px]">
                     <span className="truncate text-foreground">
@@ -282,6 +287,15 @@ export default function OverviewPage() {
                   </div>
                 </div>
               ))}
+              {weightRest.length > 0 ? (
+                <Link
+                  to="/portfolio"
+                  className="flex items-center justify-between pt-1 text-[12px] text-muted-foreground hover:text-foreground"
+                >
+                  <span>其余 {weightRest.length} 只 · 合计占比</span>
+                  <span className="font-mono">{weightRestPct.toFixed(1)}%</span>
+                </Link>
+              ) : null}
             </div>
           )}
         </div>
