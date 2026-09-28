@@ -141,8 +141,10 @@ export default function OverviewPage() {
         .sort((a, b) => b.marketValueCny - a.marketValueCny || a.symbol.localeCompare(b.symbol)),
     [positions, investedMv],
   )
-  const weightPreview = byWeight.slice(0, 8)
-  const weightRest = byWeight.slice(8)
+  // 左侧圆环+条形大约相当于 4 条持仓权重，再多会把右侧撑高、左边留白。
+  const WEIGHT_PREVIEW_LIMIT = 4
+  const weightPreview = byWeight.slice(0, WEIGHT_PREVIEW_LIMIT)
+  const weightRest = byWeight.slice(WEIGHT_PREVIEW_LIMIT)
   const weightRestPct = weightRest.reduce((sum, row) => sum + row.weight, 0)
 
   const pie = useMemo(() => {
@@ -160,6 +162,10 @@ export default function OverviewPage() {
   }, [positions, cash])
 
   const pieTotal = pie.reduce((s, d) => s + d.value, 0)
+  const pieDominant = useMemo(
+    () => [...pie].sort((a, b) => b.value - a.value || a.key.localeCompare(b.key))[0] ?? null,
+    [pie],
+  )
   const conic = pie
     .reduce<{ parts: string[]; acc: number }>(
       (st, d) => {
@@ -220,8 +226,8 @@ export default function OverviewPage() {
         <p className="text-[12px] text-muted-foreground">部分标的无行情，市值暂按成本估算。</p>
       ) : null}
 
-      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-        <div className="card">
+      <div className="grid items-stretch gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <div className="card flex h-full flex-col">
           <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
             <h2 className="text-[14px] font-semibold">市场配置</h2>
             <span className="text-[11px] text-muted-foreground">
@@ -229,30 +235,56 @@ export default function OverviewPage() {
               {fx?.HKD_CNY ? `${fx?.USD_CNY ? ' · ' : ''}HKD/CNY ${fx.HKD_CNY.toFixed(2)}` : ''}
             </span>
           </div>
-          <div className="flex min-h-64 items-center justify-center p-4">
-            {pie.length === 0 ? (
+          {pie.length === 0 ? (
+            <div className="p-4">
               <EmptyHint title="还没有市值可画" body="添加持仓或填写账户可用资金后，这里会显示市场与现金占比。" />
-            ) : (
+            </div>
+          ) : (
+            <div className="flex flex-1 flex-col items-stretch gap-4 p-4 sm:flex-row sm:items-center">
               <div
-                className="relative h-40 w-40 rounded-full"
+                className="relative mx-auto h-36 w-36 shrink-0 rounded-full sm:mx-0"
                 style={{ background: `conic-gradient(${conic})` }}
                 aria-label="市场配置占比"
               >
-                <div className="absolute inset-6 rounded-full bg-card" />
+                <div className="absolute inset-[22%] flex flex-col items-center justify-center rounded-full bg-card text-center">
+                  <span className="text-[11px] text-muted-foreground">{pieDominant?.name}</span>
+                  <span className="text-[16px] font-semibold tabular-nums text-foreground">
+                    {pieDominant && pieTotal > 0
+                      ? ((pieDominant.value / pieTotal) * 100).toFixed(1)
+                      : '0'}
+                    %
+                  </span>
+                </div>
               </div>
-            )}
-          </div>
-          <ul className="flex flex-wrap gap-4 border-t border-border/60 px-4 py-3 text-[12px] text-muted-foreground">
-            {pie.map((d) => (
-              <li key={d.key} className="flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full" style={{ background: d.fill }} />
-                {d.name} {fmtCny(d.value)}
-              </li>
-            ))}
-          </ul>
+              <ul className="min-w-0 flex-1 space-y-2.5">
+                {pie.map((d) => {
+                  const pct = pieTotal > 0 ? (d.value / pieTotal) * 100 : 0
+                  return (
+                    <li key={d.key}>
+                      <div className="mb-1 flex items-center justify-between gap-2 text-[13px]">
+                        <span className="flex items-center gap-2 text-foreground">
+                          <span className="h-2 w-2 rounded-full" style={{ background: d.fill }} />
+                          {d.name}
+                        </span>
+                        <span className="font-mono text-[12px] text-muted-foreground">
+                          {pct.toFixed(1)}% · {fmtCny(d.value)}
+                        </span>
+                      </div>
+                      <div className="h-1.5 overflow-hidden rounded-full bg-accent">
+                        <div
+                          className="h-full rounded-full"
+                          style={{ width: `${Math.min(pct, 100)}%`, background: d.fill }}
+                        />
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          )}
         </div>
 
-        <div className="card">
+        <div className="card flex h-full flex-col">
           <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
             <h2 className="text-[14px] font-semibold">持仓权重</h2>
             <Link className="text-[12px] text-primary hover:underline" to="/portfolio">
