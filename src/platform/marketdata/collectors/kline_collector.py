@@ -455,7 +455,7 @@ class KlineCollector:
 
     def _fetch_all_sources(self, symbol: str, days: int) -> list[KlineData]:
         """走 marketdata 包取数(不含缓存/合并逻辑):Engine 按 DataSource 优先级 +
-        min_count 取数(条数不足则换源/取最长,tencent → stooq(US) / eastmoney(CN/HK))。
+        min_count 取数(条数不足则换源/取最长,tencent → sina(CN/US) → eastmoney(CN/HK) / stooq(US))。
         """
         need = (max(10, min(days, 30)) if self.market == MarketCode.US
                 else (max(120, int(days * 0.6)) if self.market in (MarketCode.CN, MarketCode.HK) else 1))

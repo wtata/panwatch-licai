@@ -25,6 +25,7 @@ from pan_agent import (
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from src.platform.ai.usage_tracker import llm_scene
 from src.platform.persistence.database import get_db
 
 from .prompt import build_assistant_messages
@@ -304,7 +305,8 @@ async def _stream_runtime(
         finally:
             await queue.put(None)
 
-    worker = asyncio.create_task(produce())
+    with llm_scene("assistant"):
+        worker = asyncio.create_task(produce())
 
     async def events():
         try:
@@ -339,7 +341,8 @@ async def stream_assistant_message(
         task = service.create_task(conversation_id, user_message.id)
         prepare_context = getattr(service, "prepare_context", None)
         if prepare_context is not None:
-            context_result = await prepare_context(conversation_id)
+            with llm_scene("assistant"):
+                context_result = await prepare_context(conversation_id)
         runtime = service.build_runtime(service.build_failover_client())
         messages = context_result.messages if context_result is not None else build_assistant_messages(
             [
@@ -471,7 +474,8 @@ async def compress_context(
     service: AssistantService = Depends(get_assistant_service),
 ) -> ContextDetailDTO:
     try:
-        result = await service.compress_context(conversation_id, mode=body.mode)
+        with llm_scene("assistant"):
+            result = await service.compress_context(conversation_id, mode=body.mode)
         return service.get_context_detail(
             conversation_id,
             compression_result=result,

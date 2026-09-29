@@ -424,6 +424,9 @@ class DataCollectorManager:
             # Tushare/YFinance 的 token 等配置从 source.config 注入。
             return await self._test_kline_source(source, test_symbols)
 
+        elif source.type == "trends":
+            return await self._test_trends_source(source, test_symbols)
+
         elif source.type == "capital_flow":
             from src.platform.marketdata.collectors.capital_flow_collector import CapitalFlowCollector
 
@@ -553,6 +556,7 @@ class DataCollectorManager:
     # provider 不在这个集合里 = 包内没实现该源,测试应给出明确 error,不能构造 Engine 硬跑。
     _NEWS_PACKAGE_VENDORS = PACKAGE_VENDORS_BY_TYPE["news"]
     _KLINE_PACKAGE_VENDORS = PACKAGE_VENDORS_BY_TYPE["kline"]
+    _TRENDS_PACKAGE_VENDORS = PACKAGE_VENDORS_BY_TYPE["trends"]
     _QUOTE_PACKAGE_VENDORS = PACKAGE_VENDORS_BY_TYPE["quote"]
     _FLASH_NEWS_PACKAGE_VENDORS = PACKAGE_VENDORS_BY_TYPE["flash_news"]
     _FUNDAMENTALS_PACKAGE_VENDORS = PACKAGE_VENDORS_BY_TYPE["fundamentals"]
@@ -612,6 +616,54 @@ class DataCollectorManager:
             data=results,
             count=len(results),
             error="" if results else (first_error or "获取 K 线数据失败"),
+        )
+
+    async def _test_trends_source(
+        self, source: DataSource, test_symbols: list[str]
+    ) -> CollectorResult:
+        """按 provider 测试当日分时源:单源 Engine,不串备份链。"""
+        from marketdata import MarketData, SourceConfig, StaticConfigProvider, Symbol
+
+        if source.provider not in self._TRENDS_PACKAGE_VENDORS:
+            return CollectorResult(
+                success=False,
+                error=f"provider {source.provider} 无对应 vendor，包内未实现该分时源",
+            )
+
+        cfg = source.config or {}
+        md = MarketData(
+            config=StaticConfigProvider(
+                {"trends": [SourceConfig(vendor=source.provider, config=cfg, enabled=True)]}
+            )
+        )
+        results = []
+        first_error = ""
+        for symbol in test_symbols[:_TEST_SYMBOL_LIMIT]:
+            market = Symbol.parse(symbol).market.value
+            try:
+                points = md.trends(symbol, market=market)
+                if points:
+                    last = points[-1]
+                    results.append(
+                        {
+                            "symbol": symbol,
+                            "time": last.time,
+                            "price": last.price,
+                            "avg": last.avg,
+                            "count": len(points),
+                        }
+                    )
+                elif not first_error:
+                    first_error = "无数据"
+            except Exception as e:
+                if not first_error:
+                    first_error = str(e)
+
+        return CollectorResult(
+            success=len(results) > 0,
+            data=results,
+            count=len(results),
+            error="" if results else (first_error or "获取分时数据失败"),
         )
 
     async def _test_quote_source(

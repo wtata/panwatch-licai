@@ -1,5 +1,6 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@panwatch/base-ui/components/ui/dialog'
-import InteractiveKline from '@panwatch/biz-ui/components/InteractiveKline'
+import { Button } from '@panwatch/base-ui/components/ui/button'
+import InteractiveKline, { type KlineInterval } from '@panwatch/biz-ui/components/InteractiveKline'
 
 export default function KlineModal(props: {
   open: boolean
@@ -8,8 +9,9 @@ export default function KlineModal(props: {
   market: string
   title?: string
   description?: string
-  initialInterval?: '1d' | '1w' | '1m'
+  initialInterval?: KlineInterval
   initialDays?: '60' | '120' | '250'
+  onOpenSummary?: () => void
 }) {
   const symbol = String(props.symbol || '').trim()
   const market = String(props.market || '').trim() || 'CN'
@@ -18,16 +20,25 @@ export default function KlineModal(props: {
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogContent className="max-w-5xl">
         <DialogHeader>
-          <DialogTitle>{props.title || (symbol ? `K线：${symbol}` : 'K线')}</DialogTitle>
-          <DialogDescription>
-            {props.description || '日K/周K/月K切换，含MA/成交量/MACD。'}
-          </DialogDescription>
+          <div className="flex items-start justify-between gap-3 pr-6">
+            <div>
+              <DialogTitle>{props.title || (symbol ? `${symbol} 当日分时` : '当日分时')}</DialogTitle>
+              <DialogDescription>
+                {props.description || '当日实时分时（价格、均价、成交量），可切换日K / 周K / 月K。'}
+              </DialogDescription>
+            </div>
+            {props.onOpenSummary ? (
+              <Button variant="outline" size="sm" className="h-7 shrink-0 text-[12px]" onClick={props.onOpenSummary}>
+                日K指标
+              </Button>
+            ) : null}
+          </div>
         </DialogHeader>
         {symbol ? (
           <InteractiveKline
             symbol={symbol}
             market={market}
-            initialInterval={props.initialInterval}
+            initialInterval={props.initialInterval || 'trend'}
             initialDays={props.initialDays}
           />
         ) : (

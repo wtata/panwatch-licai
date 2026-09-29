@@ -46,7 +46,12 @@ try {
     Copy-Item -Path (Join-Path $projectRoot "frontend\dist\*") -Destination $staticDirectory -Recurse -Force
 
     Write-Host "🐳 构建 Docker 镜像 (linux/amd64)..."
-    Invoke-CheckedCommand "docker" @("build", "--platform", "linux/amd64", "--build-arg", "VERSION=$Version", "-t", $fullImage, ".")
+    $dockerArgs = @("build", "--platform", "linux/amd64")
+    if ($Version -match '^v?[0-9]+\.[0-9]+\.[0-9]+$') {
+        $dockerArgs += @("--build-arg", "VERSION=$Version")
+    }
+    $dockerArgs += @("-t", $fullImage, ".")
+    Invoke-CheckedCommand "docker" @dockerArgs
 
     if ($Version -ne "latest") {
         Invoke-CheckedCommand "docker" @("tag", $fullImage, "${imageName}:latest")

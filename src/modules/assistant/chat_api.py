@@ -27,6 +27,7 @@ from src.modules.assistant.legacy_chat_tools import (
 )
 from src.modules.assistant.prompt import ASSISTANT_SYSTEM_PROMPT as SYSTEM_PROMPT
 from src.modules.assistant.repository import AssistantRepository
+from src.platform.ai.usage_tracker import llm_scene
 from src.platform.ai.ai_failover import get_configured_failover_client
 from src.platform.events.sse import SSEStream, chat_stream_hub
 from src.platform.persistence.database import SessionLocal, get_db
@@ -294,46 +295,47 @@ async def send_message(
         ai_client = _get_ai_client(db, conv.ai_model_id)
         ai_response = ""
         try:
-            for _round in range(MAX_TOOL_ROUNDS):
-                try:
-                    response_msg = await ai_client.chat_with_tools(
-                        messages_for_ai, tools=CHAT_TOOLS, temperature=0.5,
-                    )
-                except Exception:
-                    # 模型不支持 tool use → 直接用 chat_multi
-                    logger.info("Tool use 不可用，使用普通对话")
-                    ai_response = await ai_client.chat_multi(messages_for_ai, temperature=0.5)
-                    break
+            with llm_scene("assistant"):
+                for _round in range(MAX_TOOL_ROUNDS):
+                    try:
+                        response_msg = await ai_client.chat_with_tools(
+                            messages_for_ai, tools=CHAT_TOOLS, temperature=0.5,
+                        )
+                    except Exception:
+                        # 模型不支持 tool use → 直接用 chat_multi
+                        logger.info("Tool use 不可用，使用普通对话")
+                        ai_response = await ai_client.chat_multi(messages_for_ai, temperature=0.5)
+                        break
 
-                if not response_msg.tool_calls:
-                    ai_response = response_msg.content or ""
-                    break
+                    if not response_msg.tool_calls:
+                        ai_response = response_msg.content or ""
+                        break
 
-                # 执行 tool calls
-                messages_for_ai.append({
-                    "role": "assistant",
-                    "content": response_msg.content or None,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {"name": tc.function.name, "arguments": tc.function.arguments},
-                        }
-                        for tc in response_msg.tool_calls
-                    ],
-                })
-
-                for tc in response_msg.tool_calls:
-                    tool_args = json.loads(tc.function.arguments) if tc.function.arguments else {}
-                    logger.info(f"Tool call: {tc.function.name}({tool_args})")
-                    result = await _execute_tool(db, tc.function.name, tool_args)
+                    # 执行 tool calls
                     messages_for_ai.append({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": result,
+                        "role": "assistant",
+                        "content": response_msg.content or None,
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                            }
+                            for tc in response_msg.tool_calls
+                        ],
                     })
-            else:
-                ai_response = response_msg.content or "抱歉，处理轮次过多，请精简问题再试。"
+
+                    for tc in response_msg.tool_calls:
+                        tool_args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                        logger.info(f"Tool call: {tc.function.name}({tool_args})")
+                        result = await _execute_tool(db, tc.function.name, tool_args)
+                        messages_for_ai.append({
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": result,
+                        })
+                else:
+                    ai_response = response_msg.content or "抱歉，处理轮次过多，请精简问题再试。"
 
         except Exception as e:
             logger.error(f"AI 对话失败: {e}")
@@ -385,6 +387,15 @@ async def _run_chat_stream_task(
     task_id: int | None = None,
 ) -> None:
     """后台执行对话生成（工具循环 + token 流），事件推入 stream。"""
+    with llm_scene("assistant"):
+        await _run_chat_stream_task_inner(conversation_id, stream, task_id)
+
+
+async def _run_chat_stream_task_inner(
+    conversation_id: int,
+    stream: SSEStream,
+    task_id: int | None = None,
+) -> None:
     db = SessionLocal()
     task_repository = AssistantRepository(db)
     try:

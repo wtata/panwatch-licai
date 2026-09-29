@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
-import { TrendingUp, Bot, ScrollText, Settings, List, Database, Clock, LayoutDashboard, Github, BellRing, Sparkles, Activity, ClipboardCheck, MessageCircle, Wallet, Shield, BookOpen } from 'lucide-react'
+import { TrendingUp, Bot, ScrollText, Settings, List, Database, Clock, LayoutDashboard, Github, BellRing, Sparkles, Activity, ClipboardCheck, MessageCircle, Wallet, Shield, BookOpen, Coins } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
-import { appApi, fetchAPI, isAuthenticated } from '@panwatch/api'
+import { appApi, authApi, fetchAPI, isAuthenticated } from '@panwatch/api'
 import DashboardPage from '@/pages/Dashboard'
 import OverviewPage from '@/pages/Overview'
 import DisciplinePage from '@/pages/Discipline'
@@ -11,6 +11,7 @@ import OpportunitiesPage from '@/pages/Opportunities'
 import StocksPage from '@/pages/Stocks'
 import AgentsPage from '@/pages/Agents'
 import SettingsPage from '@/pages/Settings'
+import UsagePage from '@/pages/Usage'
 import DataSourcesPage from '@/pages/DataSources'
 import HistoryPage from '@/pages/History'
 import AnalysisDetailPage from '@/pages/AnalysisDetail'
@@ -19,6 +20,8 @@ import PaperTradingPage from '@/pages/PaperTrading'
 import EvaluationsPage from '@/pages/Evaluations'
 import AssistantPage from '@/pages/Assistant'
 import LoginPage from '@/pages/Login'
+import ChangePasswordPage from '@/pages/ChangePassword'
+import { nextPathForAuth } from '@/lib/auth-gate'
 import LogsModal from '@panwatch/biz-ui/components/logs-modal'
 import AmbientBackground from '@panwatch/biz-ui/components/AmbientBackground'
 import AccountMenu from '@/components/AccountMenu'
@@ -40,6 +43,7 @@ const navItems = [
   { to: '/agents', icon: Bot, label: 'Agent' },
   { to: '/evaluations', icon: ClipboardCheck, label: '验证中心' },
   { to: '/history', icon: Clock, label: '历史' },
+  { to: '/usage', icon: Coins, label: '消费' },
   { to: '/datasources', icon: Database, label: '数据源' },
   { to: '/settings', icon: Settings, label: '设置' },
 ]
@@ -50,18 +54,42 @@ const mobileMoreNavItems = navItems.slice(5)
 
 // 认证守卫组件
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  const [authState, setAuthState] = useState<'checking' | 'authenticated' | 'unauthenticated'>('checking')
+  const [authState, setAuthState] = useState<'checking' | 'authenticated' | 'unauthenticated' | 'must-change'>('checking')
   const location = useLocation()
 
   useEffect(() => {
-    // 检查本地 token
-    if (isAuthenticated()) {
-      setAuthState('authenticated')
+    if (!isAuthenticated()) {
+      setAuthState('unauthenticated')
       return
     }
 
-    // 没有 token，需要去登录页（设置密码或登录）
-    setAuthState('unauthenticated')
+    let cancelled = false
+    authApi.me()
+      .then((me) => {
+        if (cancelled) return
+        if (me.must_change_password) {
+          localStorage.setItem('must_change_password', '1')
+          setAuthState('must-change')
+        } else {
+          localStorage.removeItem('must_change_password')
+          setAuthState('authenticated')
+        }
+      })
+      .catch(() => {
+        if (cancelled) return
+        if (!isAuthenticated()) {
+          setAuthState('unauthenticated')
+          return
+        }
+        if (localStorage.getItem('must_change_password') === '1') {
+          setAuthState('must-change')
+        } else {
+          setAuthState('authenticated')
+        }
+      })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   if (authState === 'checking') {
@@ -72,8 +100,13 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
     )
   }
 
-  if (authState === 'unauthenticated') {
-    return <Navigate to="/login" state={{ from: location }} replace />
+  const dest = nextPathForAuth({
+    pathname: location.pathname,
+    authenticated: authState !== 'unauthenticated',
+    mustChangePassword: authState === 'must-change',
+  })
+  if (dest) {
+    return <Navigate to={dest} state={{ from: location }} replace />
   }
 
   return <>{children}</>
@@ -117,11 +150,19 @@ function App() {
       .catch(() => {})
   }, [version])
 
-  // 登录页面不显示导航
+  // 登录 / 强制改密页面不显示导航
   if (location.pathname === '/login') {
     return (
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+      </Routes>
+    )
+  }
+
+  if (location.pathname === '/change-password') {
+    return (
+      <Routes>
+        <Route path="/change-password" element={<RequireAuth><ChangePasswordPage /></RequireAuth>} />
       </Routes>
     )
   }
@@ -282,6 +323,7 @@ function App() {
           <Route path="/agents" element={<AgentsPage />} />
           <Route path="/evaluations" element={<EvaluationsPage />} />
           <Route path="/history" element={<HistoryPage />} />
+          <Route path="/usage" element={<UsagePage />} />
           <Route path="/paper-trading" element={<PaperTradingPage />} />
           <Route path="/alerts" element={<PriceAlertsPage />} />
           <Route path="/assistant" element={<AssistantPage />} />

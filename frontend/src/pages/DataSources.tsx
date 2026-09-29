@@ -47,6 +47,7 @@ interface DataSourceForm {
 const DATASOURCE_TYPES = {
   news: { label: '新闻资讯', icon: Newspaper, color: 'text-blue-500' },
   kline: { label: 'K线数据', icon: LineChart, color: 'text-orange-500' },
+  trends: { label: '当日分时', icon: LineChart, color: 'text-rose-500' },
   capital_flow: { label: '资金流向', icon: DollarSign, color: 'text-yellow-500' },
   quote: { label: '实时行情', icon: TrendingUp, color: 'text-emerald-500' },
   events: { label: '事件日历', icon: Layers, color: 'text-violet-500' },
@@ -62,7 +63,7 @@ const DATASOURCE_TYPES = {
 
 // 数据源分类分组:仅用于页面展示时的二级归组,不影响数据结构与后端
 const DATASOURCE_CATEGORIES: { key: string; label: string; types: string[] }[] = [
-  { key: 'quote_kline', label: '行情 & K线', types: ['quote', 'kline'] },
+  { key: 'quote_kline', label: '行情 & K线', types: ['quote', 'kline', 'trends'] },
   { key: 'news', label: '资讯 & 快讯', types: ['news', 'flash_news', 'events'] },
   { key: 'fundamentals', label: '基本面 & 财务', types: ['fundamentals'] },
   { key: 'capital', label: '资金 & 市场面', types: ['capital_flow', 'dragon_tiger', 'margin', 'shareholders', 'northbound', 'dividend'] },

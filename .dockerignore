@@ -20,8 +20,9 @@ frontend/node_modules/
 *.swp
 *.swo
 
-# Data
+# Data and logs
 data/
+logs/
 *.db
 *.sqlite
 

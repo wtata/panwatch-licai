@@ -12,7 +12,8 @@ def test_package_vendors_by_type_content():
     """内容必须与 client.py 现状(quote/kline/capital_flow/events 各 vendor)完全一致。"""
     assert PACKAGE_VENDORS_BY_TYPE == {
         "quote": frozenset({"tencent", "sina", "eastmoney", "yfinance"}),
-        "kline": frozenset({"tencent", "stooq", "eastmoney", "yahoo"}),
+        "kline": frozenset({"tencent", "stooq", "eastmoney", "sina", "yahoo"}),
+        "trends": frozenset({"eastmoney", "tencent", "sina", "yahoo"}),
         "capital_flow": frozenset({"eastmoney", "sina"}),
         "events": frozenset({"eastmoney"}),
         "flash_news": frozenset({"cls", "sina", "eastmoney"}),
@@ -32,6 +33,7 @@ def test_package_vendors_by_type_matches_actual_engine_registration():
     engines = {
         "quote": md._quote_engine,
         "kline": md._kline_engine,
+        "trends": md._trends_engine,
         "capital_flow": md._capital_flow_engine,
         "events": md._events_engine,
         "flash_news": md._flash_news_engine,

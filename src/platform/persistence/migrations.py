@@ -1950,6 +1950,128 @@ def _m127_discipline_tables(conn: Connection) -> None:
         conn.execute(seed_sql, {"body": body, "enabled": 1})
 
 
+def _m129_portfolio_trades(conn: Connection) -> None:
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS portfolio_trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
+                stock_id INTEGER REFERENCES stocks(id) ON DELETE SET NULL,
+                account_name TEXT NOT NULL DEFAULT '',
+                stock_symbol TEXT NOT NULL DEFAULT '',
+                stock_name TEXT NOT NULL DEFAULT '',
+                stock_market TEXT NOT NULL DEFAULT '',
+                side TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                price FLOAT NOT NULL,
+                fee FLOAT NOT NULL DEFAULT 0,
+                amount FLOAT NOT NULL,
+                cash_delta FLOAT NOT NULL,
+                fx_rate FLOAT NOT NULL DEFAULT 1,
+                position_quantity_before INTEGER NOT NULL DEFAULT 0,
+                position_quantity_after INTEGER NOT NULL DEFAULT 0,
+                cost_price_before FLOAT,
+                cost_price_after FLOAT,
+                invested_amount_before FLOAT,
+                invested_amount_after FLOAT,
+                available_funds_before FLOAT NOT NULL DEFAULT 0,
+                available_funds_after FLOAT NOT NULL DEFAULT 0,
+                note TEXT DEFAULT '',
+                traded_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    _create_index_if_missing(
+        conn,
+        "ix_portfolio_trades_account_time",
+        "CREATE INDEX ix_portfolio_trades_account_time ON portfolio_trades(account_id, traded_at)",
+    )
+    _create_index_if_missing(
+        conn,
+        "ix_portfolio_trades_stock",
+        "CREATE INDEX ix_portfolio_trades_stock ON portfolio_trades(stock_id)",
+    )
+
+
+def _m128_llm_usage_records(conn: Connection) -> None:
+    conn.execute(
+        text(
+            """
+        CREATE TABLE IF NOT EXISTS llm_usage_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            day TEXT NOT NULL DEFAULT '',
+            scene TEXT NOT NULL DEFAULT 'llm',
+            operation TEXT NOT NULL DEFAULT 'chat',
+            model TEXT NOT NULL DEFAULT '',
+            prompt_tokens INTEGER DEFAULT 0,
+            completion_tokens INTEGER DEFAULT 0,
+            total_tokens INTEGER DEFAULT 0,
+            cost_usd FLOAT DEFAULT 0,
+            source TEXT DEFAULT 'api',
+            agent_name TEXT DEFAULT '',
+            trace_id TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+        )
+    )
+    _create_index_if_missing(
+        conn,
+        "ix_llm_usage_created",
+        "CREATE INDEX ix_llm_usage_created ON llm_usage_records(created_at)",
+    )
+    _create_index_if_missing(
+        conn,
+        "ix_llm_usage_day_scene",
+        "CREATE INDEX ix_llm_usage_day_scene ON llm_usage_records(day, scene)",
+    )
+
+
+def _m130_auth_must_change_password(conn: Connection) -> None:
+    """已有管理员账号补「是否必须改密」标记，只写一次。
+
+    没有密码哈希时不动，等环境变量首次建号再标记必须修改。
+    已有密码时：当前 AUTH_PASSWORD 的哈希与库存一致视为仍在用初始密码；
+    否则（含未配置 AUTH_PASSWORD）视为已经改过，不强制，避免误伤现有部署。
+    """
+    if not _has_table(conn, "app_settings"):
+        return
+    existing = conn.execute(
+        text(
+            "SELECT value FROM app_settings WHERE key = 'auth_must_change_password' LIMIT 1"
+        )
+    ).first()
+    if existing:
+        return
+    row = conn.execute(
+        text("SELECT value FROM app_settings WHERE key = 'auth_password_hash' LIMIT 1")
+    ).first()
+    if not row or not row[0]:
+        return
+
+    import os
+
+    from src.platform.security.password_hash import hash_password
+
+    env_password = os.environ.get("AUTH_PASSWORD") or ""
+    stored = str(row[0])
+    flag = "1" if env_password and hash_password(env_password) == stored else "0"
+    conn.execute(
+        text(
+            """
+INSERT INTO app_settings (key, value, description)
+VALUES ('auth_must_change_password', :value, :description)
+"""
+        ),
+        {
+            "value": flag,
+            "description": "内置管理员是否仍需修改初始密码（1=需要）",
+        },
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(101, "agent_config_kind_and_visibility", _m101_agent_config_kind),
     Migration(102, "backfill_agent_kind_data", _m102_backfill_agent_kind),
@@ -1976,6 +2098,9 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(123, "assistant_approval_workflow", _m123_assistant_approval_workflow),
     Migration(124, "assistant_context_snapshots", _m124_assistant_context_snapshots),
     Migration(127, "discipline_journal_and_rules", _m127_discipline_tables),
+    Migration(128, "llm_usage_records", _m128_llm_usage_records),
+    Migration(129, "portfolio_trades", _m129_portfolio_trades),
+    Migration(130, "auth_must_change_password", _m130_auth_must_change_password),
 )
 
 

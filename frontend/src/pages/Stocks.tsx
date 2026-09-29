@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { Plus, Trash2, Pencil, Search, X, TrendingUp, Bot, Play, RefreshCw, Wallet, PiggyBank, ArrowUpRight, ArrowDownRight, Building2, ChevronDown, ChevronRight, Cpu, Bell, Clock, Newspaper, ExternalLink, BarChart3, Brain, ImagePlus } from 'lucide-react'
+import { Plus, Trash2, Pencil, Search, X, TrendingUp, Bot, Play, RefreshCw, Wallet, PiggyBank, ArrowUpRight, ArrowDownRight, Building2, ChevronDown, ChevronRight, Cpu, Bell, Clock, Newspaper, ExternalLink, BarChart3, Brain, ImagePlus, Coins } from 'lucide-react'
 import { fetchAPI, stocksApi, type AIService, type NotifyChannel } from '@panwatch/api'
 import { useLocalStorage } from '@/lib/utils'
 import { SuggestionBadge, type SuggestionInfo, type KlineSummary } from '@panwatch/biz-ui/components/suggestion-badge'
@@ -15,9 +15,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectGroup, SelectLabel, SelectItem } from '@panwatch/base-ui/components/ui/select'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
+import KlineModal from '@panwatch/biz-ui/components/KlineModal'
 import { DeepAnalysisModal } from '@panwatch/biz-ui/components/deep-analysis-modal'
 import StockPriceAlertPanel from '@panwatch/biz-ui/components/stock-price-alert-panel'
 import ScreenshotImportModal from '@/components/holdings/ScreenshotImportModal'
+import TradeDialog, { type TradeAccount, type TradeDraft, type TradeStock } from '@/components/holdings/TradeDialog'
+import DeletePositionDialog from '@/components/holdings/DeletePositionDialog'
+import TradeHistoryDialog, { type PortfolioTradeRow } from '@/components/holdings/TradeHistoryDialog'
 
 interface AgentResult {
   success?: boolean
@@ -331,6 +335,20 @@ const mergePortfolioQuotes = (
   }
 }
 
+function toTradeStock(pos: Position): TradeStock {
+  return {
+    stockId: pos.stock_id,
+    symbol: pos.symbol,
+    name: pos.name,
+    market: pos.market,
+    positionId: pos.id,
+    quantity: pos.quantity,
+    costPrice: pos.cost_price,
+    investedAmount: pos.invested_amount,
+    currentPrice: pos.current_price,
+  }
+}
+
 export default function StocksPage() {
   const [stocks, setStocks] = useState<Stock[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
@@ -378,6 +396,7 @@ export default function StocksPage() {
 
   // Kline Dialog
   const [klineDialogOpen, setKlineDialogOpen] = useState(false)
+  const [chartOpen, setChartOpen] = useState(false)
   const [klineDialogSymbol, setKlineDialogSymbol] = useState('')
   const [klineDialogMarket, setKlineDialogMarket] = useState('CN')
   const [klineDialogName, setKlineDialogName] = useState<string | undefined>(undefined)
@@ -397,6 +416,17 @@ export default function StocksPage() {
   // Stock form
   const [showStockForm, setShowStockForm] = useState(false)
   const [screenshotImportOpen, setScreenshotImportOpen] = useState(false)
+  const [tradeOpen, setTradeOpen] = useState(false)
+  const [tradeSide, setTradeSide] = useState<'buy' | 'sell'>('buy')
+  const [tradeAccount, setTradeAccount] = useState<TradeAccount | null>(null)
+  const [tradeStock, setTradeStock] = useState<TradeStock | null>(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyAccountId, setHistoryAccountId] = useState<number | null>(null)
+  const [historyAccountName, setHistoryAccountName] = useState('')
+  const [tradeRows, setTradeRows] = useState<PortfolioTradeRow[]>([])
+  const [tradeRowsLoading, setTradeRowsLoading] = useState(false)
+  const [tradeRowsError, setTradeRowsError] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<Position | null>(null)
   const [stockForm, setStockForm] = useState<StockForm>(emptyStockForm)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchMarket, setSearchMarket] = useState('')  // 搜索市场筛选
@@ -754,7 +784,7 @@ export default function StocksPage() {
     setKlineDialogHasPosition(!!hasPosition)
     const m = market || 'CN'
     setKlineDialogInitialSummary(klineSummaries[`${m}:${symbol}`] || null)
-    setKlineDialogOpen(true)
+    setChartOpen(true)
   }, [klineSummaries])
 
   // Open news dialog - pass stock name for more stable search
@@ -1213,16 +1243,105 @@ export default function StocksPage() {
     }
   }
 
-  const handleDeletePosition = async (id: number) => {
-    if (!confirm('确定删除该持仓？')) return
+  const refreshBooks = async () => {
+    const accountData = await fetchAPI<Account[]>('/accounts')
+    setAccounts(accountData)
+    await loadPortfolio()
+  }
+
+  const searchTradeStocks = useCallback(async (q: string, market: string) => {
+    const marketParam = market ? `&market=${market}` : ''
+    return fetchAPI<{ symbol: string; name: string; market: string }[]>(
+      `/stocks/search?q=${encodeURIComponent(q)}${marketParam}`,
+    )
+  }, [])
+
+  const openTrade = (side: 'buy' | 'sell', account: AccountSummary, pos?: Position) => {
+    setTradeSide(side)
+    setTradeAccount({
+      id: account.id,
+      name: account.name,
+      availableFunds: account.available_funds,
+      positions: account.positions.map(toTradeStock),
+    })
+    setTradeStock(pos ? toTradeStock(pos) : null)
+    setTradeOpen(true)
+  }
+
+  const openHistory = (accountId: number | null, name = '') => {
+    setHistoryAccountId(accountId)
+    setHistoryAccountName(name)
+    setHistoryOpen(true)
+  }
+
+  const ensureStockId = async (symbol: string, name: string, market: string, knownId: number) => {
+    if (knownId) return knownId
+    const existing = stocks.find(item => item.symbol === symbol && item.market === market)
+    if (existing) return existing.id
     try {
-      await fetchAPI(`/positions/${id}`, { method: 'DELETE' })
-      loadPortfolio()
-      toast('持仓已删除', 'success')
-    } catch (e) {
-      toast(e instanceof Error ? e.message : '删除持仓失败', 'error')
+      const created = await fetchAPI<Stock>('/stocks', {
+        method: 'POST',
+        body: JSON.stringify({ symbol, name, market }),
+      })
+      setStocks(prev => [...prev, created])
+      return created.id
+    } catch {
+      const existingStocks = await fetchAPI<Stock[]>('/stocks')
+      setStocks(existingStocks)
+      const found = existingStocks.find(item => item.symbol === symbol && item.market === market)
+      if (!found) throw new Error('添加股票失败')
+      return found.id
     }
   }
+
+  const handleTradeSubmit = async (draft: TradeDraft) => {
+    const stockId = await ensureStockId(draft.symbol, draft.name, draft.market, draft.stockId)
+    await fetchAPI('/portfolio/trades', {
+      method: 'POST',
+      body: JSON.stringify({
+        side: draft.side,
+        account_id: draft.accountId,
+        stock_id: stockId,
+        position_id: draft.positionId,
+        quantity: draft.quantity,
+        price: draft.price,
+        fee: draft.fee,
+      }),
+    })
+    setTradeOpen(false)
+    toast(draft.side === 'buy' ? '买入已入账' : '卖出已入账', 'success')
+    try {
+      await refreshBooks()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '已入账，但刷新持仓失败', 'error')
+    }
+  }
+
+  const handleDeletePosition = async (settleAtMarket: boolean) => {
+    if (!deleteTarget) return
+    const query = settleAtMarket ? '?settle_at_market=true' : ''
+    await fetchAPI(`/positions/${deleteTarget.id}${query}`, { method: 'DELETE' })
+    setDeleteTarget(null)
+    toast(settleAtMarket ? '已按现价回笼并清空持仓' : '持仓记录已清空，可用资金未变', 'success')
+    try {
+      await refreshBooks()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '已清空，但刷新持仓失败', 'error')
+    }
+  }
+
+  useEffect(() => {
+    if (!historyOpen) return
+    let cancelled = false
+    setTradeRowsLoading(true)
+    setTradeRowsError('')
+    const query = historyAccountId ? `?account_id=${historyAccountId}&limit=200` : '?limit=200'
+    fetchAPI<PortfolioTradeRow[]>(`/portfolio/trades${query}`)
+      .then(rows => { if (!cancelled) setTradeRows(rows) })
+      .catch(e => { if (!cancelled) setTradeRowsError(e instanceof Error ? e.message : '加载流水失败') })
+      .finally(() => { if (!cancelled) setTradeRowsLoading(false) })
+    return () => { cancelled = true }
+  }, [historyOpen, historyAccountId])
 
   // ========== Agent handlers ==========
   const toggleAgent = async (stock: Stock, agentName: string) => {
@@ -1695,6 +1814,15 @@ export default function StocksPage() {
 
           <div className="card p-4">
             <div className="flex items-center gap-2 text-muted-foreground mb-1">
+              <Coins className="w-4 h-4" />
+              <span className="text-[12px]">总成本</span>
+            </div>
+            <div className="text-[20px] font-bold text-foreground font-mono">
+              {formatMoney(portfolio.total.total_cost)}
+            </div>
+          </div>
+          <div className="card p-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1">
               <Wallet className="w-4 h-4" />
               <span className="text-[12px]">可用资金</span>
             </div>
@@ -1728,7 +1856,7 @@ export default function StocksPage() {
       ) : null}
 
       {/* Tabs: Positions / Watchlist */}
-      <div className="mb-4">
+      <div className="mb-4 flex items-center justify-between gap-2">
         <div className="inline-flex items-center gap-1 p-1 rounded-lg bg-accent/30">
           <button
             onClick={() => setViewTab('positions')}
@@ -1751,6 +1879,7 @@ export default function StocksPage() {
             关注 <span className="ml-1 font-mono text-[11px] opacity-70">{watchlistCount}</span>
           </button>
         </div>
+        <Button variant="secondary" size="sm" onClick={() => openHistory(null)}>买卖流水</Button>
       </div>
 
       <ScreenshotImportModal
@@ -1769,6 +1898,35 @@ export default function StocksPage() {
           }))
         )}
         onImported={() => { load(); loadPortfolio() }}
+      />
+
+      <TradeDialog
+        open={tradeOpen}
+        onOpenChange={setTradeOpen}
+        side={tradeSide}
+        account={tradeAccount}
+        stock={tradeStock}
+        exchangeRates={portfolio?.exchange_rates}
+        onSearch={searchTradeStocks}
+        onSubmit={handleTradeSubmit}
+      />
+      <TradeHistoryDialog
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        accountName={historyAccountName}
+        trades={tradeRows}
+        loading={tradeRowsLoading}
+        error={tradeRowsError}
+      />
+      <DeletePositionDialog
+        open={!!deleteTarget}
+        onOpenChange={open => { if (!open) setDeleteTarget(null) }}
+        symbol={deleteTarget?.symbol || ''}
+        name={deleteTarget?.name || ''}
+        market={deleteTarget?.market || 'CN'}
+        quantity={deleteTarget?.quantity || 0}
+        currentPrice={deleteTarget?.current_price ?? null}
+        onConfirm={handleDeletePosition}
       />
 
       {/* Add Stock Dialog */}
@@ -1872,7 +2030,7 @@ export default function StocksPage() {
               <Building2 className="w-6 h-6 text-primary" />
             </div>
             <p className="text-[15px] font-semibold text-foreground">还没有账户</p>
-            <p className="text-[13px] text-muted-foreground mt-1.5">点击"添加账户"创建你的第一个交易账户</p>
+            <p className="text-[13px] text-muted-foreground mt-1.5">点击「添加账户」创建你的第一个交易账户</p>
           </div>
         ) : (
           <div className="space-y-4">
@@ -1914,12 +2072,18 @@ export default function StocksPage() {
                         {account.total_daily_pnl >= 0 ? '+' : ''}{formatMoney(account.total_daily_pnl)}
                       </div>
                     </div>
+                    <div className="text-left md:text-right hidden lg:block">
+                      <div className="text-[10px] md:text-[11px] text-muted-foreground">成本</div>
+                      <div className="text-[12px] md:text-[13px] font-mono whitespace-nowrap">{formatMoney(account.total_cost)}</div>
+                    </div>
                     <div className="text-left md:text-right hidden sm:block">
                       <div className="text-[10px] md:text-[11px] text-muted-foreground">可用</div>
                       <div className="text-[12px] md:text-[13px] font-mono whitespace-nowrap">{formatMoney(account.available_funds)}</div>
                     </div>
                   </div>
                   <div className="flex items-center gap-0 md:gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                    <Button variant="ghost" size="sm" className="h-7 px-2 text-[12px] text-rose-600" onClick={() => openTrade('buy', account)}>买入</Button>
+                    <Button variant="ghost" size="sm" className="h-7 px-2 text-[12px]" onClick={() => openHistory(account.id, account.name)}>流水</Button>
                     <Button variant="ghost" size="icon" className="h-7 w-7 md:h-8 md:w-8" onClick={() => openPositionDialog(account.id)}>
                       <Plus className="w-3 md:w-3.5 h-3 md:h-3.5" />
                     </Button>
@@ -1937,7 +2101,7 @@ export default function StocksPage() {
               {expandedAccounts.has(account.id) && (
                 <div className="border-t border-border/30">
                   {account.positions.length === 0 ? (
-                    <p className="text-[13px] text-muted-foreground text-center py-8">暂无持仓，点击 + 添加</p>
+                    <p className="text-[13px] text-muted-foreground text-center py-8">暂无持仓，点「买入」记一笔，或点 + 手工录入</p>
                   ) : (
                     <>
                       {/* Desktop Table */}
@@ -2102,10 +2266,11 @@ export default function StocksPage() {
                                     )}
                                   </td>
                                   <td className="px-4 py-2.5 text-center">
-                                    <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                      {(() => { const { suggestion, kline } = getSuggestionForStock(pos.symbol, pos.market, true); return (!suggestion && !kline) ? (
-                                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openKlineDialog(pos.symbol, pos.market, pos.name, true)} title="K线指标"><BarChart3 className="w-3 h-3" /></Button>
-                                      ) : null })()}
+                                    <div className="flex items-center justify-center gap-1">
+                                      <button type="button" className="text-[11px] font-medium text-rose-600 px-1.5 py-0.5 rounded hover:bg-rose-500/10" onClick={() => openTrade('buy', account, pos)}>买入</button>
+                                      <button type="button" className="text-[11px] font-medium text-emerald-600 px-1.5 py-0.5 rounded hover:bg-emerald-500/10" onClick={() => openTrade('sell', account, pos)}>卖出</button>
+                                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openKlineDialog(pos.symbol, pos.market, pos.name, true)} title="当日分时"><BarChart3 className="w-3 h-3" /></Button>
                                       <StockPriceAlertPanel
                                         mode="icon"
                                         stockId={pos.stock_id}
@@ -2119,7 +2284,8 @@ export default function StocksPage() {
                                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openNewsDialog(pos.name)} title="相关资讯"><Newspaper className="w-3 h-3" /></Button>
                                       <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-primary" title="深度分析(TradingAgents)" onClick={() => openDeepAnalysis(pos.stock_id, pos.symbol, pos.name)}><Brain className="w-3 h-3" /></Button>
                                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openPositionDialog(account.id, pos)}><Pencil className="w-3 h-3" /></Button>
-                                      <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-destructive" onClick={() => handleDeletePosition(pos.id)}><Trash2 className="w-3 h-3" /></Button>
+                                      <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-destructive" title="清空记录" onClick={() => setDeleteTarget(pos)}><Trash2 className="w-3 h-3" /></Button>
+                                      </div>
                                     </div>
                                   </td>
                                 </tr>
@@ -2269,9 +2435,9 @@ export default function StocksPage() {
                                   )}
                                 </div>
                                 <div className="flex items-center gap-1">
-                                  {(() => { const { suggestion, kline } = getSuggestionForStock(pos.symbol, pos.market, true); return (!suggestion && !kline) ? (
-                                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openKlineDialog(pos.symbol, pos.market, pos.name, true)} title="K线指标"><BarChart3 className="w-3 h-3" /></Button>
-                                  ) : null })()}
+                                  <button type="button" className="text-[11px] font-medium text-rose-600 px-1.5 py-0.5 rounded hover:bg-rose-500/10" onClick={() => openTrade('buy', account, pos)}>买入</button>
+                                  <button type="button" className="text-[11px] font-medium text-emerald-600 px-1.5 py-0.5 rounded hover:bg-emerald-500/10" onClick={() => openTrade('sell', account, pos)}>卖出</button>
+                                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openKlineDialog(pos.symbol, pos.market, pos.name, true)} title="当日分时"><BarChart3 className="w-3 h-3" /></Button>
                                   <StockPriceAlertPanel
                                     mode="icon"
                                     stockId={pos.stock_id}
@@ -2285,7 +2451,7 @@ export default function StocksPage() {
                                   <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openNewsDialog(pos.name)}><Newspaper className="w-3 h-3" /></Button>
                                   <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-primary" title="深度分析(TradingAgents)" onClick={() => openDeepAnalysis(pos.stock_id, pos.symbol, pos.name)}><Brain className="w-3 h-3" /></Button>
                                   <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openPositionDialog(account.id, pos)}><Pencil className="w-3 h-3" /></Button>
-                                  <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-destructive" onClick={() => handleDeletePosition(pos.id)}><Trash2 className="w-3 h-3" /></Button>
+                                  <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-destructive" title="清空记录" onClick={() => setDeleteTarget(pos)}><Trash2 className="w-3 h-3" /></Button>
                                 </div>
                               </div>
                             </div>
@@ -2469,7 +2635,7 @@ export default function StocksPage() {
                           size="icon"
                           className="h-7 w-7"
                           onClick={() => openKlineDialog(stock.symbol, stock.market, stock.name, false)}
-                          title="K线指标"
+                          title="当日分时"
                         >
                           <BarChart3 className="w-3.5 h-3.5" />
                         </Button>
@@ -2529,7 +2695,17 @@ export default function StocksPage() {
         </div>
       )}
 
-      {/* Kline Dialog */}
+      <KlineModal
+        open={chartOpen}
+        onOpenChange={setChartOpen}
+        symbol={klineDialogSymbol}
+        market={klineDialogMarket}
+        title={klineDialogName ? `${klineDialogName} 当日分时` : (klineDialogSymbol ? `${klineDialogSymbol} 当日分时` : '当日分时')}
+        description="当日实时分时（价格、均价、成交量），可切换日K / 周K / 月K。"
+        initialInterval="trend"
+        onOpenSummary={() => setKlineDialogOpen(true)}
+      />
+
       <KlineSummaryDialog
         open={klineDialogOpen}
         onOpenChange={setKlineDialogOpen}
@@ -2649,7 +2825,7 @@ export default function StocksPage() {
           <DialogHeader>
             <DialogTitle>{editPositionId ? '编辑持仓' : '添加持仓'}</DialogTitle>
             <DialogDescription>
-              {accounts.find(a => a.id === positionDialogAccountId)?.name} 账户持仓
+              {accounts.find(a => a.id === positionDialogAccountId)?.name} 账户持仓。这里只改正记录，不产生买卖流水，也不变动可用资金。加减仓请用「买入 / 卖出」。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 mt-2">

@@ -61,6 +61,17 @@ class Bar:
 
 
 @dataclass
+class TrendPoint:
+    """当日分时一点。time 为市场本地钟面(YYYY-MM-DD HH:MM),ts 为 Unix 秒。"""
+
+    time: str
+    ts: int
+    price: float
+    avg: float
+    volume: float = 0.0
+
+
+@dataclass
 class CapitalFlow:
     """资金流向(对齐 PanWatch src/collectors/capital_flow_collector.CapitalFlow)。"""
 

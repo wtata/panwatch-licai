@@ -117,6 +117,7 @@ class PanWatchProgressHandler(_LCBaseCallbackHandler):
             )
         except Exception:
             model = ""
+        self._llm_model = model
         self._otel_llm_span = otel.start_detached_span(
             f"chat {model}".strip() if model else "chat",
             parent_context=self._otel_parent,
@@ -149,6 +150,19 @@ class PanWatchProgressHandler(_LCBaseCallbackHandler):
             completion_tokens=completion_tokens,
             call_cost=round(cost, 6),
         )
+        try:
+            from src.platform.ai.usage_tracker import record_llm_usage
+
+            record_llm_usage(
+                model=str(getattr(self, "_llm_model", "") or "tradingagents"),
+                prompt_tokens=int(prompt_tokens or 0),
+                completion_tokens=int(completion_tokens or 0),
+                scene="tradingagents",
+                operation="tradingagents",
+                source="api",
+            )
+        except Exception:
+            pass
         # OTel:回填 token 用量并结束 gen_ai span。
         if self._otel_llm_span is not None:
             otel.set_span_attributes(

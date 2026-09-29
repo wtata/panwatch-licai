@@ -31,6 +31,12 @@ class KlineVendor(Vendor):
     pass
 
 
+class TrendsVendor(Vendor):
+    """分时 vendor:fetch 返回 TrendBars(list[TrendPoint])。单 symbol,当日。"""
+
+    pass
+
+
 class CapitalFlowVendor(Vendor):
     """资金流向 vendor:fetch 返回 list[CapitalFlow]。单 symbol。"""
 

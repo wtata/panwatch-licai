@@ -466,7 +466,10 @@ class NewsDigestAgent(BaseAgent):
     async def analyze(self, context: AgentContext, data: dict) -> AnalysisResult:
         """重写分析：落库到历史，便于在 UI 中查看“新闻速递”产物。"""
         system_prompt, user_content = self.build_prompt(data, context)
-        content = await context.ai_client.chat(system_prompt, user_content)
+        from src.platform.ai.usage_tracker import llm_scene
+
+        with llm_scene(self.name):
+            content = await context.ai_client.chat(system_prompt, user_content)
 
         if context.model_label:
             idx = content.rfind(TAG_START)

@@ -757,7 +757,10 @@ class IntradayMonitorAgent(BaseAgent):
         # 打印完整 prompt 用于调试
         logger.info(f"=== Prompt for {stock.symbol} ===\n{user_content}")
 
-        raw_content = await context.ai_client.chat(system_prompt, user_content)
+        from src.platform.ai.usage_tracker import llm_scene
+
+        with llm_scene(self.name):
+            raw_content = await context.ai_client.chat(system_prompt, user_content)
 
         # 打印 AI 返回结果
         logger.info(f"=== AI Response for {stock.symbol} ===\n{raw_content}")

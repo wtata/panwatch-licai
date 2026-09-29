@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Clipboard, ImagePlus, Upload } from 'lucide-react'
+import { Clipboard, ImagePlus, Loader2, Upload } from 'lucide-react'
 import { fetchAPI, stocksApi } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@panwatch/base-ui/components/ui/dialog'
@@ -8,8 +8,9 @@ import { Label } from '@panwatch/base-ui/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@panwatch/base-ui/components/ui/select'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import { commitHoldingImport, enrichRowFromSearch, parseRowNumbers, type HoldingImportDeps } from '@/lib/ocr/importHoldings'
-import { parseHoldings, toEditableRows } from '@/lib/ocr/parseHoldings'
-import { fileFromPasteEvent, readClipboardImage, recognizeHoldingsImage, type RecognizeResult } from '@/lib/ocr/recognize'
+import { parseHoldings, toEditableRows, sanitizeEditableHoldings } from '@/lib/ocr/parseHoldings'
+import { fileFromPasteEvent, readClipboardImage } from '@/lib/ocr/recognize'
+import { scanHoldingsImage, type ScanHoldingsResult } from '@/lib/ocr/scanHoldings'
 import type { EditableHoldingRow, PositionRef, StockRef } from '@/lib/ocr/types'
 
 interface AccountOption {
@@ -25,7 +26,7 @@ interface ScreenshotImportModalProps {
   existingStocks: StockRef[]
   existingPositions: PositionRef[]
   onImported: () => void
-  recognizeImage?: (file: Blob, onProgress?: (info: { progress: number; status: string }) => void) => Promise<RecognizeResult>
+  recognizeImage?: (file: Blob, onProgress?: (info: { progress: number; status: string }) => void) => Promise<ScanHoldingsResult | { text: string; words?: ScanHoldingsResult['words'] }>
 }
 
 type Stage = 'idle' | 'ocr' | 'preview' | 'importing'
@@ -53,7 +54,7 @@ export default function ScreenshotImportModal({
   existingStocks,
   existingPositions,
   onImported,
-  recognizeImage = recognizeHoldingsImage,
+  recognizeImage = scanHoldingsImage,
 }: ScreenshotImportModalProps) {
   const { toast } = useToast()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -110,10 +111,12 @@ export default function ScreenshotImportModal({
         setProgress(info.progress)
         setStatus(info.status)
       })
-      const parsed = parseHoldings(result)
+      const parsed = 'holdings' in result && Array.isArray(result.holdings) && result.holdings.length
+        ? result.holdings
+        : parseHoldings(result)
       const editable = toEditableRows(parsed)
       const enriched = await Promise.all(editable.map((row) => enrichRowFromSearch(row, importDeps.searchStocks)))
-      setRows(enriched)
+      setRows(sanitizeEditableHoldings(enriched))
       setStage('preview')
       if (enriched.length === 0) {
         setError('没有识别到股票，请换一张更清晰的同花顺持仓截图，或在预览中手工核对')
@@ -150,8 +153,63 @@ export default function ScreenshotImportModal({
     [rows],
   )
 
+  const [matchingIds, setMatchingIds] = useState<Record<string, boolean>>({})
+  const rematchTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const rematchSeq = useRef<Record<string, number>>({})
+
+  const setMatching = (id: string, matching: boolean) => {
+    setMatchingIds((prev) => {
+      if (matching) return prev[id] ? prev : { ...prev, [id]: true }
+      if (!prev[id]) return prev
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+  }
+
+  const rematchRow = useCallback(async (id: string, next: EditableHoldingRow) => {
+    const seq = (rematchSeq.current[id] || 0) + 1
+    rematchSeq.current[id] = seq
+    setMatching(id, true)
+    try {
+      const enriched = await enrichRowFromSearch(next, importDeps.searchStocks)
+      if (rematchSeq.current[id] !== seq) return
+      setRows((prev) => prev.map((row) => {
+        if (row.id !== id) return row
+        const matched = Boolean(enriched.symbol)
+        return {
+          ...row,
+          ...enriched,
+          quantity: next.quantity,
+          avgCost: next.avgCost,
+          selected: matched ? true : row.selected,
+        }
+      }))
+    } finally {
+      if (rematchSeq.current[id] === seq) setMatching(id, false)
+    }
+  }, [])
+
+  const latestRow = (id: string) => {
+    setRows((prev) => {
+      const row = prev.find((item) => item.id === id)
+      if (row) void rematchRow(id, row)
+      return prev
+    })
+  }
+
   const updateRow = (id: string, patch: Partial<EditableHoldingRow>) => {
     setRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)))
+    if (!('name' in patch) && !('symbol' in patch)) return
+    setMatching(id, true)
+    window.clearTimeout(rematchTimers.current[id])
+    rematchTimers.current[id] = setTimeout(() => latestRow(id), 350)
+  }
+
+  const rematchOnBlur = (id: string) => {
+    window.clearTimeout(rematchTimers.current[id])
+    setMatching(id, true)
+    latestRow(id)
   }
 
   const handleConfirm = async () => {
@@ -202,11 +260,16 @@ export default function ScreenshotImportModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent
+        className="max-w-3xl"
+        onPointerDownOutside={(event) => event.preventDefault()}
+        onInteractOutside={(event) => event.preventDefault()}
+        onEscapeKeyDown={(event) => event.preventDefault()}
+      >
         <DialogHeader>
-          <DialogTitle>同花顺截图导入</DialogTitle>
+          <DialogTitle>截图导入持仓</DialogTitle>
           <DialogDescription>
-            上传或粘贴同花顺持仓截图，识别后可改数量/成本，再写入选定账户。无需登录同花顺。首次识别会下载中文模型。
+            上传或粘贴券商/同花顺持仓截图。优先按表格列读取「持仓数量」和「成本价」，不用现价或可卖数量。识别后仍可改，再写入选定账户。
           </DialogDescription>
         </DialogHeader>
 
@@ -303,8 +366,9 @@ export default function ScreenshotImportModal({
                   <tbody>
                     {rows.map((row) => {
                       const invalid = row.selected && 'error' in parseRowNumbers(row)
+                      const matching = Boolean(matchingIds[row.id])
                       return (
-                        <tr key={row.id} className={`border-t border-border/20 ${invalid ? 'bg-destructive/5' : ''}`}>
+                        <tr key={row.id} className={`border-t border-border/20 ${invalid ? 'bg-destructive/5' : matching ? 'bg-primary/5' : ''}`}>
                           <td className="px-2 py-1.5">
                             <input
                               type="checkbox"
@@ -314,10 +378,29 @@ export default function ScreenshotImportModal({
                             />
                           </td>
                           <td className="px-2 py-1.5">
-                            <Input className="h-8 px-2 font-mono" value={row.symbol} onChange={(event) => updateRow(row.id, { symbol: event.target.value })} />
+                            <div className="relative">
+                              <Input
+                                className={`h-8 px-2 pr-7 font-mono ${matching ? 'border-primary/60' : ''}`}
+                                value={row.symbol}
+                                onChange={(event) => updateRow(row.id, { symbol: event.target.value })}
+                                onBlur={() => rematchOnBlur(row.id)}
+                                aria-busy={matching}
+                              />
+                              {matching && (
+                                <Loader2
+                                  aria-label="正在匹配代码"
+                                  className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-primary"
+                                />
+                              )}
+                            </div>
                           </td>
                           <td className="px-2 py-1.5">
-                            <Input className="h-8 px-2" value={row.name} onChange={(event) => updateRow(row.id, { name: event.target.value })} />
+                            <Input
+                              className="h-8 px-2"
+                              value={row.name}
+                              onChange={(event) => updateRow(row.id, { name: event.target.value })}
+                              onBlur={() => rematchOnBlur(row.id)}
+                            />
                           </td>
                           <td className="px-2 py-1.5">
                             <Input className="h-8 px-2 font-mono" value={row.quantity} onChange={(event) => updateRow(row.id, { quantity: event.target.value })} />
@@ -326,7 +409,9 @@ export default function ScreenshotImportModal({
                             <Input className="h-8 px-2 font-mono" value={row.avgCost} onChange={(event) => updateRow(row.id, { avgCost: event.target.value })} />
                           </td>
                           <td className="px-2 py-1.5 text-[11px] text-amber-600">
-                            {row.warnings.join('；') || (invalid ? '请补全数量和成本' : '')}
+                            {matching
+                              ? <span className="inline-flex items-center gap-1 text-primary">正在匹配代码…</span>
+                              : (row.warnings.join('；') || (invalid ? '请补全数量和成本' : ''))}
                           </td>
                         </tr>
                       )

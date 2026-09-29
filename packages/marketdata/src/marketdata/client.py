@@ -73,6 +73,13 @@ class MarketData:
             config=config, metrics=self.metrics,
             cache=TTLCache(default_ttl_sec=0.0), default_ttl=0.0,
         )
+        # 当日分时盘中会变,短 TTL 让前端约 30 秒刷新能拿到新点,又避免连点打爆数据源。
+        self._trends_engine = Engine(
+            datatype="trends",
+            vendors=build_vendors("trends"),
+            config=config, metrics=self.metrics,
+            cache=TTLCache(default_ttl_sec=15.0), default_ttl=15.0,
+        )
         self._capital_flow_engine = Engine(
             datatype="capital_flow",
             vendors=build_vendors("capital_flow"),
@@ -147,6 +154,12 @@ class MarketData:
         req = Request(symbols=(symbol,), market=market, timeframe="day", limit=days,
                       extra=(("days", days),))
         resp = self._kline_engine.fetch(req, min_count=min_count, cache_ttl_sec=0)
+        return resp.data or []
+
+    def trends(self, symbol: str, *, market: str) -> list:
+        """当日分时(价格/均价/成交量)。返回 TrendBars。US 源可含盘前。"""
+        req = Request(symbols=(symbol,), market=market, timeframe="1m", limit=1)
+        resp = self._trends_engine.fetch(req, cache_ttl_sec=15)
         return resp.data or []
 
     def quotes(self, symbols: list[str | Symbol], *, market: str | None = None) -> list[Quote]:

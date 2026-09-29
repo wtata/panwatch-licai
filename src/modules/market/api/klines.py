@@ -142,6 +142,44 @@ def get_klines_batch(payload: KlineBatchRequest):
     return results
 
 
+_TRENDS_TZ = {"CN": "Asia/Shanghai", "HK": "Asia/Shanghai", "US": "America/New_York"}
+_US_TRENDS_EMPTY_HINT = (
+    "暂无美股当日分时。常规交易时段由新浪提供（免代理，约 09:30–16:00 美东）；"
+    "若重启后仍为空，请到数据源确认「新浪美股分时」已启用。"
+    "盘前盘后不在这条曲线里，需要时再启用 Yahoo 分时并填写代理。"
+)
+
+
+@router.get("/{symbol}/trends")
+def get_trends(symbol: str, market: str = "CN"):
+    """当日实时分时:价格、均价、成交量。ts 为 Unix 秒。time 与 timezone 为市场本地钟面(美股为美东,含夏令时)。"""
+    market_code = _parse_market(market)
+    from src.platform.marketdata.collectors.kline_collector import get_market_data
+
+    bars = get_market_data().trends(symbol, market=market_code.value) or []
+    tz = getattr(bars, "timezone", None) or _TRENDS_TZ.get(market_code.value, "Asia/Shanghai")
+    points = [
+        {
+            "time": p.time,
+            "ts": int(p.ts),
+            "price": p.price,
+            "avg": p.avg,
+            "volume": p.volume,
+        }
+        for p in bars
+    ]
+    return {
+        "symbol": symbol,
+        "market": market_code.value,
+        "timezone": tz,
+        "date": points[-1]["time"][:10] if points else "",
+        "prev_close": getattr(bars, "prev_close", None),
+        "source": getattr(bars, "vendor", "") or "",
+        "hint": _US_TRENDS_EMPTY_HINT if (not points and market_code.value == "US") else "",
+        "points": points,
+    }
+
+
 @router.get("/{symbol}/summary")
 def get_kline_summary(symbol: str, market: str = "CN"):
     """获取单只股票K线摘要"""

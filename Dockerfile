@@ -17,14 +17,22 @@ RUN pnpm install --frozen-lockfile
 
 # 复制源码并构建
 COPY frontend/ ./
+# 版本号以仓库根目录 VERSION 为准；发布流水线可用 --build-arg VERSION 覆盖。
+ARG VERSION=
+COPY VERSION /tmp/VERSION
+RUN set -eu; \
+    if [ -n "${VERSION}" ]; then \
+      v="${VERSION#v}"; \
+      case "$v" in \
+        [0-9]*.[0-9]*.[0-9]*) printf '%s\n' "$v" > /tmp/VERSION ;; \
+      esac; \
+    fi; \
+    node -e 'const fs=require("fs"); const v=fs.readFileSync("/tmp/VERSION","utf8").trim(); if(!/^\d+\.\d+\.\d+$/.test(v)){console.error("invalid VERSION:", v); process.exit(1);} const p=JSON.parse(fs.readFileSync("package.json","utf8")); p.version=v; fs.writeFileSync("package.json", JSON.stringify(p,null,2)+"\n");'
 RUN pnpm build
 
 
 # ===== Stage 2: Python 运行环境 =====
 FROM python:3.11-slim
-
-# 版本号（构建时传入）
-ARG VERSION=dev
 
 WORKDIR /app
 
@@ -93,18 +101,26 @@ COPY src/ ./src/
 COPY server.py ./
 COPY prompts/ ./prompts/
 
-# 写入版本号
-RUN echo "${VERSION}" > VERSION
+# 版本号唯一来源是仓库根目录 VERSION。--build-arg VERSION 仅在发布时覆盖文件内容。
+ARG VERSION=
+COPY VERSION ./VERSION
+RUN if [ -n "${VERSION}" ]; then \
+      v="${VERSION#v}"; \
+      case "$v" in \
+        [0-9]*.[0-9]*.[0-9]*) printf '%s\n' "$v" > VERSION ;; \
+      esac; \
+    fi
 
 # 从前端构建阶段复制静态文件
 COPY --from=frontend-builder /app/frontend/dist ./static/
 
-# 创建数据目录
-RUN mkdir -p /app/data
+# 创建数据目录和日志目录（日志可挂载到宿主机）
+RUN mkdir -p /app/data /app/logs
 
 # 环境变量
 ENV PYTHONUNBUFFERED=1
 ENV DATA_DIR=/app/data
+ENV LOG_DIR=/app/logs
 ENV DOCKER=1
 
 # 默认时区（可在 docker run 时用 -e TZ=... 覆盖）
@@ -115,7 +131,7 @@ EXPOSE 8000
 
 # 健康检查（使用 Python）
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
 # 启动命令
 CMD ["python", "server.py"]

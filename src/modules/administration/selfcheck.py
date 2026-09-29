@@ -103,8 +103,11 @@ async def probe_ai_model(model, service) -> dict:
     t0 = time.monotonic()
     try:
         client = AIClient(base_url=service.base_url, api_key=service.api_key, model=model.model)
-        await client.chat(system_prompt="You are a helpful assistant.",
-                          user_content="Say 'OK'.", temperature=0)
+        from src.platform.ai.usage_tracker import llm_scene
+
+        with llm_scene("model_test"):
+            await client.chat(system_prompt="You are a helpful assistant.",
+                              user_content="Say 'OK'.", temperature=0)
         latency = int((time.monotonic() - t0) * 1000)
         return _item("ai", f"ai:{model.id}", name, _status_for(True, latency), latency)
     except Exception as e:
