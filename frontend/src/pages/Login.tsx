@@ -30,7 +30,10 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!username || !password) return
+    if (!username || !password) {
+      toast('请输入用户名和密码', 'error')
+      return
+    }
 
     if (isSetup) {
       if (password !== confirmPassword) {

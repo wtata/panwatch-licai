@@ -16,7 +16,7 @@
 - **端口**：8000（本机和容器内都是这个端口）
 - **依赖**：Docker。本地开发另需 Python 3.11（见 `.python-version`）和 Node.js 24.14.0（见 `.nvmrc`，包管理用 pnpm 9.15.9）
 - **日志**：本地在项目 `logs/panwatch-YYYY-MM-DD.log`，默认保留 30 天。目录用 `LOG_DIR` 调整，保留天数用 `LOG_RETENTION_DAYS` 调整。线上把宿主机目录挂进容器，例如 `-v ./logs:/app/logs`，容器内路径是 `/app/logs`
-- **版本号**：只维护根目录 `VERSION`（当前 `0.14.2`）。`/health`、`/api/health` 和页面上的版本都读它
+- **版本号**：只维护根目录 `VERSION`（当前 `0.14.3`）。`/health`、`/api/health` 和页面上的版本都读它
 
 ### 启动命令
 

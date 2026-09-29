@@ -81,6 +81,15 @@ export async function fetchAPI<T>(path: string, options?: ApiRequestOptions): Pr
   }
 
   if (res.status === 401) {
+    // 登录/初始化接口的 401 是凭证错误，不能当成会话过期去清 token 并硬跳转
+    if (path === '/auth/login' || path === '/auth/setup') {
+      const errBody: ApiResponse<T> = await res.json().catch(() => ({
+        code: res.status,
+        data: null as T,
+        message: '用户名或密码错误',
+      }))
+      throw new Error(errBody.message || '用户名或密码错误')
+    }
     logout()
     throw new Error('登录已过期')
   }
