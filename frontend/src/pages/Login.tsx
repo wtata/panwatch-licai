@@ -6,6 +6,7 @@ import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Input } from '@panwatch/base-ui/components/ui/input'
 import { Label } from '@panwatch/base-ui/components/ui/label'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
+import SiteFiling from '@/components/SiteFiling'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -82,7 +83,8 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
+    <div className="min-h-screen flex flex-col bg-background">
+      <div className="flex-1 flex items-center justify-center px-4 py-8">
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="flex flex-col items-center mb-8">
@@ -175,6 +177,8 @@ export default function LoginPage() {
           AI 驱动的股票监控助手
         </p>
       </div>
+      </div>
+      <SiteFiling className="pt-2 pb-[max(1rem,env(safe-area-inset-bottom))]" />
     </div>
   )
 }

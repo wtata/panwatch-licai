@@ -27,6 +27,7 @@ import AmbientBackground from '@panwatch/biz-ui/components/AmbientBackground'
 import AccountMenu from '@/components/AccountMenu'
 import AssistantOpenBridge from '@/components/AssistantOpenBridge'
 import SelfCheckModal from '@/components/SelfCheckModal'
+import SiteFiling from '@/components/SiteFiling'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@panwatch/base-ui/components/ui/dialog'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 
@@ -333,6 +334,8 @@ function App() {
           <Route path="/analysis/:symbol/:date" element={<AnalysisDetailPage />} />
         </Routes>
       </main>
+      {/* 备案号页脚（助手页是全高聊天布局，不放页脚） */}
+      {!isAssistantRoute && <SiteFiling className="pt-2 pb-4 md:pb-6" />}
       <LogsModal open={logsOpen} onOpenChange={setLogsOpen} />
       <SelfCheckModal open={selfCheckOpen} onClose={() => setSelfCheckOpen(false)} />
       <Dialog open={upgradeOpen} onOpenChange={setUpgradeOpen}>
