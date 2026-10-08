@@ -173,9 +173,6 @@ export default function LoginPage() {
           </form>
         </div>
 
-        <p className="text-center text-xs text-muted-foreground mt-6">
-          AI 驱动的股票监控助手
-        </p>
       </div>
       </div>
       <SiteFiling className="pt-2 pb-[max(1rem,env(safe-area-inset-bottom))]" />
